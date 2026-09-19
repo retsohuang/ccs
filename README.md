@@ -20,6 +20,20 @@ Anthropic-compatible APIs without config thrash.
 
 </div>
 
+## About this fork
+
+This is a standalone mirror of [kaitranntt/ccs](https://github.com/kaitranntt/ccs) carrying
+exactly one change: `rules` is added to `SHARED_ITEMS`
+(`src/management/shared-manager/types.ts`) as a directory-type shared item, so every instance
+links `rules -> ~/.ccs/shared/rules -> ~/.claude/rules` the same way it links `skills` —
+including instances created by `ccs auth create`, with no external provisioning step.
+
+Releases are tagged `v<upstream-base>-retso.<n>` and nothing upgrades the fork automatically;
+a new version only arrives through a deliberate rebase onto upstream.
+
+**Migrating back:** at each deliberate rebase, check whether upstream's `SHARED_ITEMS` has
+gained a `rules` entry. Once it has, this fork is no longer needed and retires.
+
 > **[Docker]** `ghcr.io/kaitranntt/ccs-dashboard:latest` is deprecated. Use `ghcr.io/kaitranntt/ccs:latest` instead. See [#1251](https://github.com/kaitranntt/ccs/issues/1251) and [docker/README.md](docker/README.md#choosing-an-image) for migration details. To wire a sibling container to CLIProxy, see [Connect your app to CLIProxy](docker/README.md#connect-your-app-to-cliproxy).
 
 <!-- quickstart-snippet-start -->
