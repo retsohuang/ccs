@@ -132,9 +132,6 @@ describe('stripClaudeSubcommandSessionArgs', () => {
     expect(stripClaudeSubcommandSessionArgs(['doctor', '--permission-mode=acceptEdits'])).toEqual([
       'doctor',
     ]);
-    expect(
-      stripClaudeSubcommandSessionArgs(['remote-control', '--permission-mode', 'bypassPermissions'])
-    ).toEqual(['remote-control']);
   });
 
   it('preserves --permission-mode for the agents subcommand (after)', () => {
@@ -171,6 +168,38 @@ describe('stripClaudeSubcommandSessionArgs', () => {
         'agents',
       ])
     ).toEqual(['--dangerously-skip-permissions', '--allow-dangerously-skip-permissions', 'agents']);
+  });
+
+  it('preserves --permission-mode for the remote-control subcommand', () => {
+    expect(
+      stripClaudeSubcommandSessionArgs([
+        'remote-control',
+        '--name',
+        'rescue',
+        '--spawn',
+        'same-dir',
+        '--capacity',
+        '2',
+        '--permission-mode',
+        'bypassPermissions',
+      ])
+    ).toEqual([
+      'remote-control',
+      '--name',
+      'rescue',
+      '--spawn',
+      'same-dir',
+      '--capacity',
+      '2',
+      '--permission-mode',
+      'bypassPermissions',
+    ]);
+  });
+
+  it('still strips --dangerously-skip-permissions for the remote-control subcommand', () => {
+    expect(
+      stripClaudeSubcommandSessionArgs(['remote-control', '--dangerously-skip-permissions'])
+    ).toEqual(['remote-control']);
   });
 
   it('still strips --teammate-mode for the agents subcommand (not accepted by upstream)', () => {

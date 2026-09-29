@@ -105,6 +105,9 @@ const SUBCOMMAND_SESSION_ONLY_VALUE_FLAGS = new Set<string>([
  *   and `--allow-dangerously-skip-permissions` as defaults for dispatched
  *   sessions (see `claude agents --help`). Stripping these breaks
  *   `ccs <profile> agents --permission-mode bypassPermissions`.
+ * - `remote-control` accepts `--permission-mode` for the sessions it spawns
+ *   (see `claude remote-control --help`). Stripping it starts a standing
+ *   server whose sessions wait on a permission prompt.
  */
 const SUBCOMMAND_ALLOWED_SESSION_FLAGS: Record<string, ReadonlySet<string>> = {
   agents: new Set<string>([
@@ -112,6 +115,7 @@ const SUBCOMMAND_ALLOWED_SESSION_FLAGS: Record<string, ReadonlySet<string>> = {
     '--dangerously-skip-permissions',
     '--permission-mode',
   ]),
+  'remote-control': new Set<string>(['--permission-mode']),
 };
 
 /**
