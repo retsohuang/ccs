@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import { info, warn } from '../../utils/ui';
-import { keepTrackedDefaults } from './tracked-defaults';
+import { keepTrackedDefaults, reportDroppedDefaults } from './tracked-defaults';
 import { getLstatSync } from './fs-helpers';
 
 export type DivergedFileAdoption = 'not-claimed' | 'claimed';
@@ -369,6 +369,7 @@ export function adoptDivergedFileContent(
 
     const canonical = getCanonicalFile(canonicalPath);
     let adopted = diverged;
+    let dropped: string[] = [];
     if (canonical.content) {
       if (diverged.equals(canonical.content)) {
         fs.unlinkSync(claimPath);
@@ -381,9 +382,11 @@ export function adoptDivergedFileContent(
       if (kept) {
         if (kept.identical) {
           fs.unlinkSync(claimPath);
+          reportDroppedDefaults(kept.dropped);
           return 'claimed';
         }
         adopted = kept.content;
+        dropped = kept.dropped;
       }
       if (claimedStats.mtimeMs <= (canonical.mtimeMs ?? 0)) {
         preserveClaim(
@@ -423,6 +426,7 @@ export function adoptDivergedFileContent(
     console.log(
       info(`Adopted diverged ${path.basename(divergedPath)} content into ${canonicalPath}`)
     );
+    reportDroppedDefaults(dropped);
     return 'claimed';
   } catch (err) {
     if (divergencePreserved) {

@@ -1,5 +1,7 @@
 import { isDeepStrictEqual } from 'util';
 
+import { info } from '../../utils/ui';
+
 /**
  * Default keys of settings.json: the top-level `model` and `effortLevel`, and
  * the `effortLevel` of each `modelSettings.<model id>` entry. At copy-back the
@@ -102,11 +104,36 @@ function mergeSettings(canonical: JsonRecord, saved: JsonRecord): JsonRecord {
   return merged;
 }
 
+function describeDroppedDefaults(canonical: JsonRecord, saved: JsonRecord): string[] {
+  const dropped: string[] = [];
+  const differs = (key: string) =>
+    hasKey(saved, key) && !isDeepStrictEqual(saved[key], canonical[key]);
+  if (differs('model')) dropped.push(`dropped saved model ${String(saved.model)}`);
+  if (differs('effortLevel')) dropped.push(`dropped saved effort ${String(saved.effortLevel)}`);
+
+  const savedMap = isJsonRecord(saved[MODEL_SETTINGS_KEY]) ? saved[MODEL_SETTINGS_KEY] : {};
+  const canonicalMap = isJsonRecord(canonical[MODEL_SETTINGS_KEY])
+    ? canonical[MODEL_SETTINGS_KEY]
+    : {};
+  for (const [modelId, savedEntry] of Object.entries(savedMap)) {
+    if (!isJsonRecord(savedEntry) || !hasKey(savedEntry, ENTRY_DEFAULT_KEY)) continue;
+    const canonicalEntry = canonicalMap[modelId];
+    const canonicalLevel = isJsonRecord(canonicalEntry)
+      ? canonicalEntry[ENTRY_DEFAULT_KEY]
+      : undefined;
+    if (!isDeepStrictEqual(savedEntry[ENTRY_DEFAULT_KEY], canonicalLevel)) {
+      dropped.push(`dropped saved effort ${String(savedEntry[ENTRY_DEFAULT_KEY])} for ${modelId}`);
+    }
+  }
+  return dropped;
+}
+
 export interface KeptDefaults {
   /** The saved file's content with every default key held at the canonical file's state. */
   content: Buffer;
   /** True when nothing but default keys differs, so the saved file is dropped whole. */
   identical: boolean;
+  dropped: string[];
 }
 
 export function keepTrackedDefaults(
@@ -127,5 +154,12 @@ export function keepTrackedDefaults(
   return {
     content: Buffer.from(`${JSON.stringify(merged, null, 2)}\n`, 'utf8'),
     identical: isDeepStrictEqual(merged, canonical),
+    dropped: describeDroppedDefaults(canonical, saved),
   };
+}
+
+export function reportDroppedDefaults(dropped: readonly string[]): void {
+  for (const line of dropped) {
+    console.error(info(`Kept defaults in settings.json: ${line}`));
+  }
 }

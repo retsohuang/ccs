@@ -922,6 +922,8 @@ describe('SharedManager', () => {
     });
 
     describe('tracked default keys', () => {
+      const stripAnsi = (text: string) => text.replace(/\u001b\[[0-9;]*m/g, '');
+
       function writeSettings(filePath: string, value: unknown): void {
         fs.mkdirSync(path.dirname(filePath), { recursive: true });
         fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
@@ -947,6 +949,24 @@ describe('SharedManager', () => {
           .filter((entry) =>
             /\.(ccs-adopted-recovery|ccs-adopt-recovery|bak-ccs-adopt)/.test(entry)
           );
+      }
+
+      function captureLaunchLines(run: () => void): { stderr: string[]; stdout: string[] } {
+        const stderr: string[] = [];
+        const stdout: string[] = [];
+        const errorSpy = spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+          stderr.push(stripAnsi(args.join(' ')));
+        });
+        const logSpy = spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+          stdout.push(stripAnsi(args.join(' ')));
+        });
+        try {
+          run();
+        } finally {
+          errorSpy.mockRestore();
+          logSpy.mockRestore();
+        }
+        return { stderr, stdout };
       }
 
       it('drops a saved file that differs only in model, leaving no copy', () => {
@@ -1061,9 +1081,93 @@ describe('SharedManager', () => {
         writeSettings(instanceRegistryPath, { version: 2, plugins: {}, model: 'new' });
         setMtime(instanceRegistryPath, fs.statSync(claudeRegistryPath).mtimeMs + 2_000);
 
-        new SharedManager().linkSharedDirectories(instancePath);
+        const { stderr } = captureLaunchLines(() =>
+          new SharedManager().linkSharedDirectories(instancePath)
+        );
 
         expect(readJson(claudeRegistryPath).model).toBe('new');
+        expect(stderr).toEqual([]);
+      });
+
+      describe('launch lines', () => {
+        const droppedLines = (tracked: unknown, saved: unknown) =>
+          captureLaunchLines(() => copyBackSharedSettings(tracked, saved));
+
+        it('reports a dropped model value', () => {
+          const { stderr } = droppedLines({ model: 'claude-fable-5-1' }, { model: 'sonnet' });
+
+          expect(stderr).toEqual([
+            '[i] Kept defaults in settings.json: dropped saved model sonnet',
+          ]);
+        });
+
+        it('reports a dropped per-model effort level with its model', () => {
+          const { stderr } = droppedLines(
+            { modelSettings: { 'claude-fable-5-1': { effortLevel: 'high' } } },
+            { modelSettings: { 'claude-fable-5-1': { effortLevel: 'xhigh' } } }
+          );
+
+          expect(stderr).toEqual([
+            '[i] Kept defaults in settings.json: dropped saved effort xhigh for claude-fable-5-1',
+          ]);
+        });
+
+        it('reports a dropped top-level effort level without a model', () => {
+          const { stderr } = droppedLines({ effortLevel: 'high' }, { effortLevel: 'xhigh' });
+
+          expect(stderr).toEqual([
+            '[i] Kept defaults in settings.json: dropped saved effort xhigh',
+          ]);
+        });
+
+        it('prints one line for each of two dropped values', () => {
+          const { stderr } = droppedLines(
+            {
+              model: 'claude-fable-5-1',
+              modelSettings: { 'claude-fable-5-1': { effortLevel: 'high' } },
+            },
+            {
+              model: 'sonnet',
+              modelSettings: { 'claude-fable-5-1': { effortLevel: 'xhigh' } },
+            }
+          );
+
+          expect(stderr).toEqual([
+            '[i] Kept defaults in settings.json: dropped saved model sonnet',
+            '[i] Kept defaults in settings.json: dropped saved effort xhigh for claude-fable-5-1',
+          ]);
+        });
+
+        it('prints no line for a key the saved file only removed', () => {
+          const { stderr } = droppedLines(
+            { model: 'claude-fable-5-1', theme: 'dark' },
+            { theme: 'dark' }
+          );
+
+          expect(stderr).toEqual([]);
+        });
+
+        it('prints no line when the copy-back drops nothing', () => {
+          const { stderr } = droppedLines(
+            { model: 'claude-fable-5-1', theme: 'light' },
+            { model: 'claude-fable-5-1', theme: 'dark' }
+          );
+
+          expect(stderr).toEqual([]);
+        });
+
+        it('writes the lines to standard error only, also when other keys were adopted', () => {
+          const { stderr, stdout } = droppedLines(
+            { model: 'claude-fable-5-1', theme: 'light' },
+            { model: 'sonnet', theme: 'dark' }
+          );
+
+          expect(stderr).toEqual([
+            '[i] Kept defaults in settings.json: dropped saved model sonnet',
+          ]);
+          expect(stdout.some((line) => line.includes('Adopted diverged settings.json'))).toBe(true);
+          expect(stdout.some((line) => line.includes('Kept defaults'))).toBe(false);
+        });
       });
     });
   });
