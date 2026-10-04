@@ -22,21 +22,32 @@ Anthropic-compatible APIs without config thrash.
 
 ## About this fork
 
-This is a standalone mirror of [kaitranntt/ccs](https://github.com/kaitranntt/ccs) carrying
-two changes. First: `rules` is added to `SHARED_ITEMS`
-(`src/management/shared-manager/types.ts`) as a directory-type shared item, so every instance
-links `rules -> ~/.ccs/shared/rules -> ~/.claude/rules` the same way it links `skills` —
-including instances created by `ccs auth create`, with no external provisioning step.
-Second: `--permission-mode` is no longer stripped for the `remote-control` subcommand
-(`SUBCOMMAND_ALLOWED_SESSION_FLAGS` in `src/utils/claude-subcommand-detector.ts`), so a standing
+This is a fork of [kaitranntt/ccs](https://github.com/kaitranntt/ccs) carrying four changes.
+First: `rules` is added to `SHARED_ITEMS` (`src/management/shared-manager/types.ts`) as a
+directory-type shared item, so every instance links
+`rules -> ~/.ccs/shared/rules -> ~/.claude/rules` the same way it links `skills` — including
+instances created by `ccs auth create`, with no external provisioning step. Second: `agent-memory` is added to
+`SHARED_ITEMS` the same way, so every instance links
+`agent-memory -> ~/.ccs/shared/agent-memory -> ~/.claude/agent-memory`. Third: `--permission-mode` is no longer stripped for the
+`remote-control` subcommand (`SUBCOMMAND_ALLOWED_SESSION_FLAGS` in
+`src/utils/claude-subcommand-detector.ts`), so a standing
 `ccs <profile> remote-control --permission-mode bypassPermissions` server keeps the flag.
+Fourth: the default model and effort are pinned. When ccs copies a saved `settings.json` back, the
+target file wins for `model`, the top-level `effortLevel` and each
+`modelSettings.<model id>.effortLevel`, so a `/model` or `/effort` switch inside a session never
+becomes the default of a later one, and ccs prints one `[i] Kept defaults in settings.json` line
+on standard error for each saved value it drops. `ccs pin` shows the default and changes it on
+purpose: `ccs pin`, `ccs pin model <id>`, `ccs pin effort <level>` and
+`ccs pin effort <level> <id>`.
 
 Releases are tagged `v<upstream-base>-retso.<n>` and nothing upgrades the fork automatically;
-a new version only arrives through a deliberate rebase onto upstream.
+a new version only arrives through a deliberate rebase onto upstream. There is no upstream pull
+request.
 
 **Migrating back:** at each deliberate rebase, check whether upstream's `SHARED_ITEMS` has
-gained a `rules` entry and whether its `SUBCOMMAND_ALLOWED_SESSION_FLAGS` covers `remote-control`.
-Once both have, this fork is no longer needed and retires.
+gained `rules` and `agent-memory` entries, whether its `SUBCOMMAND_ALLOWED_SESSION_FLAGS` covers
+`remote-control`, and whether its copy-back keeps the default model and effort. The fork retires
+only when upstream carries all four.
 
 > **[Docker]** `ghcr.io/kaitranntt/ccs-dashboard:latest` is deprecated. Use `ghcr.io/kaitranntt/ccs:latest` instead. See [#1251](https://github.com/kaitranntt/ccs/issues/1251) and [docker/README.md](docker/README.md#choosing-an-image) for migration details. To wire a sibling container to CLIProxy, see [Connect your app to CLIProxy](docker/README.md#connect-your-app-to-cliproxy).
 
