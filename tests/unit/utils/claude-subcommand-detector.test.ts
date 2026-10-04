@@ -56,7 +56,6 @@ describe('isClaudeSubcommandInvocation', () => {
     expect(isClaudeSubcommandInvocation(['--name', 'auth'])).toBe(false);
   });
 
-
   it('treats --print prompt mode as non-subcommand even with subcommand-like prompt text', () => {
     expect(isClaudeSubcommandInvocation(['--print', 'agents'])).toBe(false);
     expect(isClaudeSubcommandInvocation(['--print', 'doctor'])).toBe(false);
@@ -196,6 +195,12 @@ describe('stripClaudeSubcommandSessionArgs', () => {
     ]);
   });
 
+  it('preserves the --permission-mode=<value> form for the remote-control subcommand', () => {
+    expect(
+      stripClaudeSubcommandSessionArgs(['remote-control', '--permission-mode=bypassPermissions'])
+    ).toEqual(['remote-control', '--permission-mode=bypassPermissions']);
+  });
+
   it('still strips --dangerously-skip-permissions for the remote-control subcommand', () => {
     expect(
       stripClaudeSubcommandSessionArgs(['remote-control', '--dangerously-skip-permissions'])
@@ -243,7 +248,6 @@ describe('subcommand passthrough — injectors short-circuit', () => {
     expect(appendBrowserToolArgs(['agents'])).toEqual(['agents']);
     expect(appendBrowserToolArgs(['remote-control'])).toEqual(['remote-control']);
   });
-
 
   it('injectors still inject in --print prompt mode with subcommand-like prompt text', () => {
     const out = appendThirdPartyWebSearchToolArgs(['--print', 'agents']);
