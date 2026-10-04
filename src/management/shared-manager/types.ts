@@ -55,6 +55,7 @@ export const SHARED_ITEMS: readonly ManagedSharedItem[] = [
   { name: 'skills', type: 'directory' },
   { name: 'agents', type: 'directory' },
   { name: 'rules', type: 'directory' },
+  { name: 'agent-memory', type: 'directory' },
   { name: 'plugins', type: 'directory' },
   {
     name: 'settings.json',
