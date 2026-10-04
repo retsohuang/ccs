@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import { info, warn } from '../../utils/ui';
+import { keepTrackedDefaults } from './tracked-defaults';
 import { getLstatSync } from './fs-helpers';
 
 export type DivergedFileAdoption = 'not-claimed' | 'claimed';
@@ -367,10 +368,22 @@ export function adoptDivergedFileContent(
     }
 
     const canonical = getCanonicalFile(canonicalPath);
+    let adopted = diverged;
     if (canonical.content) {
       if (diverged.equals(canonical.content)) {
         fs.unlinkSync(claimPath);
         return 'claimed';
+      }
+      const kept =
+        path.basename(divergedPath) === 'settings.json'
+          ? keepTrackedDefaults(canonical.content, diverged)
+          : null;
+      if (kept) {
+        if (kept.identical) {
+          fs.unlinkSync(claimPath);
+          return 'claimed';
+        }
+        adopted = kept.content;
       }
       if (claimedStats.mtimeMs <= (canonical.mtimeMs ?? 0)) {
         preserveClaim(
@@ -390,8 +403,8 @@ export function adoptDivergedFileContent(
       claimedStats.mode & 0o777
     );
 
-    publishCanonicalContent(canonical.writePath, diverged, canonical.mode, canonical.identity);
-    if (!fs.readFileSync(canonicalPath).equals(diverged)) {
+    publishCanonicalContent(canonical.writePath, adopted, canonical.mode, canonical.identity);
+    if (!fs.readFileSync(canonicalPath).equals(adopted)) {
       throw Object.assign(
         new TypeError(`Canonical adoption postcondition failed: ${canonicalPath}`),
         {

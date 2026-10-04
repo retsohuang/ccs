@@ -920,6 +920,152 @@ describe('SharedManager', () => {
       expect(fs.lstatSync(intermediatePath).isSymbolicLink()).toBe(true);
       expect(fs.existsSync(claimPath)).toBe(false);
     });
+
+    describe('tracked default keys', () => {
+      function writeSettings(filePath: string, value: unknown): void {
+        fs.mkdirSync(path.dirname(filePath), { recursive: true });
+        fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
+      }
+
+      function copyBackSharedSettings(
+        tracked: unknown,
+        saved: unknown
+      ): { claudeSettingsPath: string; sharedSettingsPath: string; before: string } {
+        const claudeSettingsPath = path.join(claudeDir(), 'settings.json');
+        const sharedSettingsPath = path.join(ccsDir(), 'shared', 'settings.json');
+        writeSettings(claudeSettingsPath, tracked);
+        const before = fs.readFileSync(claudeSettingsPath, 'utf8');
+        writeSettings(sharedSettingsPath, saved);
+        setMtime(sharedSettingsPath, fs.statSync(claudeSettingsPath).mtimeMs + 2_000);
+        new SharedManager().ensureSharedDirectories();
+        return { claudeSettingsPath, sharedSettingsPath, before };
+      }
+
+      function listCopies(directory: string): string[] {
+        return fs
+          .readdirSync(directory)
+          .filter((entry) =>
+            /\.(ccs-adopted-recovery|ccs-adopt-recovery|bak-ccs-adopt)/.test(entry)
+          );
+      }
+
+      it('drops a saved file that differs only in model, leaving no copy', () => {
+        const { claudeSettingsPath, sharedSettingsPath, before } = copyBackSharedSettings(
+          { model: 'claude-fable-5-1', theme: 'dark' },
+          { model: 'sonnet', theme: 'dark' }
+        );
+
+        expect(fs.lstatSync(sharedSettingsPath).isSymbolicLink()).toBe(true);
+        expect(fs.readFileSync(claudeSettingsPath, 'utf8')).toBe(before);
+        expect(listCopies(claudeDir())).toEqual([]);
+        expect(listCopies(path.join(ccsDir(), 'shared'))).toEqual([]);
+      });
+
+      it('keeps the tracked model and takes the other saved keys', () => {
+        const { claudeSettingsPath, before } = copyBackSharedSettings(
+          { model: 'claude-fable-5-1', alwaysThinkingEnabled: true, theme: 'dark' },
+          { model: 'sonnet', alwaysThinkingEnabled: false, theme: 'dark' }
+        );
+
+        const after = fs.readFileSync(claudeSettingsPath, 'utf8');
+        expect(readJson(claudeSettingsPath)).toEqual({
+          model: 'claude-fable-5-1',
+          alwaysThinkingEnabled: false,
+          theme: 'dark',
+        });
+        expect(after.endsWith('}\n')).toBe(true);
+        expect(after).toContain('\n  "alwaysThinkingEnabled": false,');
+        const changedLines = after
+          .split('\n')
+          .filter((line, index) => line !== before.split('\n')[index]);
+        expect(changedLines).toEqual(['  "alwaysThinkingEnabled": false,']);
+      });
+
+      it('keeps the tracked model when the saved file removed it', () => {
+        const { claudeSettingsPath, before } = copyBackSharedSettings(
+          { model: 'claude-fable-5-1', theme: 'dark' },
+          { theme: 'dark' }
+        );
+
+        expect(fs.readFileSync(claudeSettingsPath, 'utf8')).toBe(before);
+      });
+
+      it('adds no model when the tracked file has none', () => {
+        const { claudeSettingsPath, before } = copyBackSharedSettings(
+          { theme: 'dark' },
+          { model: 'sonnet', theme: 'dark' }
+        );
+
+        expect(fs.readFileSync(claudeSettingsPath, 'utf8')).toBe(before);
+      });
+
+      it('keeps the top-level effortLevel and each modelSettings effortLevel', () => {
+        const { claudeSettingsPath, before } = copyBackSharedSettings(
+          {
+            effortLevel: 'high',
+            modelSettings: { 'claude-fable-5-1': { effortLevel: 'high' } },
+          },
+          {
+            effortLevel: 'xhigh',
+            modelSettings: { 'claude-fable-5-1': { effortLevel: 'xhigh' } },
+          }
+        );
+
+        expect(fs.readFileSync(claudeSettingsPath, 'utf8')).toBe(before);
+      });
+
+      it('does not create a modelSettings entry that holds only an effort level', () => {
+        const { claudeSettingsPath, before } = copyBackSharedSettings(
+          { modelSettings: { 'claude-fable-5-1': { effortLevel: 'high' } } },
+          {
+            modelSettings: {
+              'claude-fable-5-1': { effortLevel: 'high' },
+              'claude-sonnet-5': { effortLevel: 'xhigh' },
+            },
+          }
+        );
+
+        expect(fs.readFileSync(claudeSettingsPath, 'utf8')).toBe(before);
+      });
+
+      it('keeps an effort level the saved file removed and the entry fields it changed', () => {
+        const { claudeSettingsPath } = copyBackSharedSettings(
+          { modelSettings: { 'claude-fable-5-1': { effortLevel: 'high', note: 'old' } } },
+          { modelSettings: { 'claude-fable-5-1': { note: 'new' } } }
+        );
+
+        expect(readJson(claudeSettingsPath)).toEqual({
+          modelSettings: { 'claude-fable-5-1': { effortLevel: 'high', note: 'new' } },
+        });
+      });
+
+      it('applies the same rule to an instance settings.json', () => {
+        const instancePath = instanceDir('work');
+        const claudeSettingsPath = path.join(claudeDir(), 'settings.json');
+        const instanceSettingsPath = path.join(instancePath, 'settings.json');
+        writeSettings(claudeSettingsPath, { model: 'claude-fable-5-1', theme: 'light' });
+        writeSettings(instanceSettingsPath, { model: 'sonnet', theme: 'dark' });
+        setMtime(instanceSettingsPath, fs.statSync(claudeSettingsPath).mtimeMs + 2_000);
+
+        new SharedManager().linkSharedDirectories(instancePath);
+
+        expect(fs.lstatSync(instanceSettingsPath).isSymbolicLink()).toBe(true);
+        expect(readJson(claudeSettingsPath)).toEqual({ model: 'claude-fable-5-1', theme: 'dark' });
+      });
+
+      it('copies a saved installed_plugins.json back whole', () => {
+        const instancePath = instanceDir('work');
+        const claudeRegistryPath = path.join(claudeDir(), 'plugins', 'installed_plugins.json');
+        const instanceRegistryPath = path.join(instancePath, 'plugins', 'installed_plugins.json');
+        writeSettings(claudeRegistryPath, { version: 2, plugins: {}, model: 'old' });
+        writeSettings(instanceRegistryPath, { version: 2, plugins: {}, model: 'new' });
+        setMtime(instanceRegistryPath, fs.statSync(claudeRegistryPath).mtimeMs + 2_000);
+
+        new SharedManager().linkSharedDirectories(instancePath);
+
+        expect(readJson(claudeRegistryPath).model).toBe('new');
+      });
+    });
   });
 
   describe('marketplace registry ownership', () => {
