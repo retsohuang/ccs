@@ -174,6 +174,145 @@ describe('ccs pin', () => {
     });
   });
 
+  describe('effort', () => {
+    it('sets the effort of the default model and leaves the model key alone', async () => {
+      writeTracked({
+        model: 'claude-sonnet-5-5',
+        modelSettings: { 'claude-sonnet-5-5': { effortLevel: 'high' } },
+      });
+      const before = readTracked();
+
+      expect(await pin('effort', 'xhigh')).toBe(0);
+
+      expect(changedLines(before, readTracked())).toEqual(['      "effortLevel": "xhigh"']);
+      expect(logLines).toEqual(['[OK] Effort for claude-sonnet-5-5: high -> xhigh']);
+      expect(fs.lstatSync(claudeSettingsPath()).isSymbolicLink()).toBe(true);
+    });
+
+    it('sets the effort of another model without moving the default', async () => {
+      writeTracked({ model: 'claude-fable-5-1' });
+
+      expect(await pin('effort', 'xhigh', 'claude-opus-5-5')).toBe(0);
+
+      expect(readTrackedJson()).toEqual({
+        model: 'claude-fable-5-1',
+        modelSettings: { 'claude-opus-5-5': { effortLevel: 'xhigh' } },
+      });
+      expect(logLines).toEqual(['[OK] Effort for claude-opus-5-5: not set -> xhigh']);
+    });
+
+    it('leaves the other fields of the entry untouched', async () => {
+      writeTracked({
+        model: 'claude-fable-5-1',
+        modelSettings: { 'claude-fable-5-1': { note: 'keep', effortLevel: 'high' } },
+      });
+
+      expect(await pin('effort', 'low')).toBe(0);
+
+      expect(readTrackedJson().modelSettings).toEqual({
+        'claude-fable-5-1': { note: 'keep', effortLevel: 'low' },
+      });
+    });
+
+    it('writes nothing when the level already is the saved value', async () => {
+      writeTracked({
+        model: 'claude-fable-5-1',
+        modelSettings: { 'claude-fable-5-1': { effortLevel: 'high' } },
+      });
+      const before = readTracked();
+
+      expect(await pin('effort', 'high')).toBe(0);
+
+      expect(readTracked()).toBe(before);
+      expect(logLines).toEqual(['[i] Effort for claude-fable-5-1 is already high']);
+    });
+
+    it('stores the effort of a 1M model id under the plain id', async () => {
+      writeTracked({ model: 'claude-fable-5-1' });
+
+      expect(await pin('effort', 'xhigh', 'claude-fable-5-1[1m]')).toBe(0);
+
+      expect(readTrackedJson().modelSettings).toEqual({
+        'claude-fable-5-1': { effortLevel: 'xhigh' },
+      });
+    });
+
+    it('reads the default model through its 1M form', async () => {
+      writeTracked({ model: 'claude-fable-5-1[1m]' });
+
+      expect(await pin('effort', 'xhigh')).toBe(0);
+
+      expect(readTrackedJson().modelSettings).toEqual({
+        'claude-fable-5-1': { effortLevel: 'xhigh' },
+      });
+    });
+
+    it('neither reads nor writes the top-level effortLevel', async () => {
+      writeTracked({ model: 'claude-fable-5-1', effortLevel: 'low' });
+
+      expect(await pin('effort', 'low')).toBe(0);
+
+      expect(readTrackedJson()).toEqual({
+        model: 'claude-fable-5-1',
+        effortLevel: 'low',
+        modelSettings: { 'claude-fable-5-1': { effortLevel: 'low' } },
+      });
+      expect(logLines).toEqual(['[OK] Effort for claude-fable-5-1: not set -> low']);
+    });
+
+    describe('refusals', () => {
+      const refusals: {
+        label: string;
+        state: Record<string, unknown>;
+        args: string[];
+        line: string;
+      }[] = [
+        {
+          label: 'an alias for the model',
+          state: { model: 'claude-fable-5-1' },
+          args: ['effort', 'xhigh', 'opus'],
+          line: '[X] opus is an alias. Use the full model id, for example claude-opus-5-5',
+        },
+        {
+          label: 'an alias with the 1M suffix',
+          state: { model: 'claude-fable-5-1' },
+          args: ['effort', 'xhigh', 'sonnet[1m]'],
+          line: '[X] sonnet[1m] is an alias. Use the full model id, for example claude-opus-5-5',
+        },
+        {
+          label: 'a level Claude Code cannot save',
+          state: { model: 'claude-fable-5-1' },
+          args: ['effort', 'max'],
+          line: '[X] max cannot be saved as a default. Use low, medium, high or xhigh',
+        },
+        {
+          label: 'an alias as the default model',
+          state: { model: 'fable' },
+          args: ['effort', 'xhigh'],
+          line: '[X] The default model fable is an alias. Name the model: ccs pin effort xhigh <id>',
+        },
+        {
+          label: 'a file with no model key',
+          state: { theme: 'dark' },
+          args: ['effort', 'xhigh'],
+          line: '[X] No default model is set. Name the model: ccs pin effort xhigh <id>',
+        },
+      ];
+
+      for (const refusal of refusals) {
+        it(`refuses ${refusal.label}, writes nothing, and exits non-zero`, async () => {
+          writeTracked(refusal.state);
+          const before = readTracked();
+
+          expect(await pin(...refusal.args)).toBe(1);
+
+          expect(errorLines).toEqual([refusal.line]);
+          expect(readTracked()).toBe(before);
+        });
+      }
+    });
+  });
+
   describe('argument shapes', () => {
     const shapes = [
       ['model'],
