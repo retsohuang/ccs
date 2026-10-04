@@ -105,6 +105,12 @@ export const ROOT_COMMAND_CATALOG: readonly RootCommandEntry[] = [
     group: 'manage',
     visibility: 'public',
   },
+  {
+    name: 'pin',
+    summary: 'Set the default model and effort for new sessions',
+    group: 'manage',
+    visibility: 'public',
+  },
   { name: 'tokens', summary: 'Manage CLIProxy auth tokens', group: 'manage', visibility: 'public' },
   {
     name: 'migrate',

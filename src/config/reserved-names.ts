@@ -32,6 +32,7 @@ export const RESERVED_PROFILE_NAMES = [
   'config',
   'cliproxy',
   'proxy',
+  'pin',
 ] as const;
 
 export type ReservedProfileName = (typeof RESERVED_PROFILE_NAMES)[number];

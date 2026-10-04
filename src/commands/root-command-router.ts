@@ -179,6 +179,13 @@ export const ROOT_COMMAND_ROUTES: readonly NamedCommandRoute[] = [
     },
   },
   {
+    name: 'pin',
+    handle: async (args) => {
+      const { handlePinCommand } = await import('./pin-command');
+      process.exit(await handlePinCommand(args));
+    },
+  },
+  {
     name: 'env',
     handle: async (args) => {
       const { handleEnvCommand } = await import('./env-command');
