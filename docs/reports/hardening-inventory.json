@@ -1,10 +1,10 @@
 {
   "scope": "src/**/*.{ts,tsx,js,jsx,mjs,cjs}",
   "syncFs": {
-    "totalOccurrences": 2513,
-    "filesAffected": 263,
-    "hotpathOccurrences": 1183,
-    "hotpathFilesAffected": 156,
+    "totalOccurrences": 2523,
+    "filesAffected": 264,
+    "hotpathOccurrences": 1193,
+    "hotpathFilesAffected": 157,
     "topHotpathFiles": [
       {
         "file": "src/utils/browser/mcp-installer.ts",
@@ -23,24 +23,8 @@
         "markers": []
       },
       {
-        "file": "src/utils/image-analysis/mcp-installer.ts",
-        "count": 30,
-        "calls": [
-          "chmodSync",
-          "copyFileSync",
-          "existsSync",
-          "mkdirSync",
-          "readFileSync",
-          "renameSync",
-          "statSync",
-          "unlinkSync",
-          "writeFileSync"
-        ],
-        "markers": []
-      },
-      {
         "file": "src/management/shared-manager/diverged-file-adopter.ts",
-        "count": 29,
+        "count": 30,
         "calls": [
           "chmodSync",
           "closeSync",
@@ -51,6 +35,22 @@
           "readdirSync",
           "readFileSync",
           "readlinkSync",
+          "renameSync",
+          "statSync",
+          "unlinkSync",
+          "writeFileSync"
+        ],
+        "markers": []
+      },
+      {
+        "file": "src/utils/image-analysis/mcp-installer.ts",
+        "count": 30,
+        "calls": [
+          "chmodSync",
+          "copyFileSync",
+          "existsSync",
+          "mkdirSync",
+          "readFileSync",
           "renameSync",
           "statSync",
           "unlinkSync",
@@ -577,8 +577,8 @@
     },
     "loggerCoverage": {
       "filesWithCreateLogger": 65,
-      "totalSourceFiles": 765,
-      "coverageRatio": 0.085,
+      "totalSourceFiles": 767,
+      "coverageRatio": 0.0847,
       "subdomainsWithZeroCreateLogger": [
         "api",
         "bin",
@@ -604,7 +604,7 @@
         },
         {
           "subdomain": "commands",
-          "count": 110,
+          "count": 111,
           "withLogger": 2
         },
         {
@@ -614,7 +614,7 @@
         },
         {
           "subdomain": "management",
-          "count": 35,
+          "count": 36,
           "withLogger": 1
         },
         {
@@ -650,8 +650,8 @@
       ]
     },
     "hotpathConsoleErrors": {
-      "totalOccurrences": 590,
-      "exemptOccurrences": 326,
+      "totalOccurrences": 605,
+      "exemptOccurrences": 341,
       "hotpathOccurrences": 264,
       "filesAffected": 81,
       "topFiles": [
