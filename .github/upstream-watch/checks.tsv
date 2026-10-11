@@ -1,0 +1,4 @@
+rules	src/management/shared-manager/types.ts	name: 'rules'	feat(shared-manager): add rules to SHARED_ITEMS
+agent-memory	src/management/shared-manager/types.ts	name: 'agent-memory'	feat(shared-manager): add agent-memory to SHARED_ITEMS
+remote-control permission-mode	src/utils/claude-subcommand-detector.ts	'remote-control': new Set<string>(['--permission-mode'])	feat(subcommand): keep --permission-mode for remote-control | test(subcommand): cover the --permission-mode=<value> form for remote-control
+default pin	src/commands/command-catalog.ts	Set the default model and effort for new sessions	feat(shared-manager): keep the tracked default keys at settings.json copy-back | feat(shared-manager): report each default value the copy-back drops | feat(pin): add ccs pin with its show and model forms | feat(pin): add the effort form of ccs pin
