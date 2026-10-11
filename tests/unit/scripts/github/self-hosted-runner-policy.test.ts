@@ -16,6 +16,10 @@ function workflowsDir() {
     // Gating on trusted-author association would silently allow contract-breaking changes
     // from forks. No build, install, or arbitrary PR-branch scripts are run here.
     'breaking-change-guard.yml': 'ubuntu-latest — fork-safe YAML diff check; no untrusted code execution',
+    // The fork has no self-hosted runner. Runs only on a schedule and on manual dispatch,
+    // never on a pull request, and executes only code from the fork's main and upstream's
+    // release tags. The token is read-only (permissions: contents: read).
+    'upstream-watch.yml': 'ubuntu-latest — fork has no self-hosted runner; schedule and dispatch only, read-only token',
   };
 
 describe('self-hosted runner policy', () => {
