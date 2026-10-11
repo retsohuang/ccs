@@ -7,7 +7,6 @@ on:
 
 permissions:
   contents: read
-  issues: write
 
 jobs:
   watch:
@@ -41,20 +40,16 @@ jobs:
             echo "newer=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          existing=$(gh issue list --state all --limit 200 --json title --jq "[.[] | select(.title | startswith(\"Upstream $tag:\"))] | length")
-          if [ "$existing" != "0" ]; then
-            echo "an issue for $tag already exists"
-            echo "newer=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "newer=true" >> "$GITHUB_OUTPUT"
 
-      - name: Test rebase and open the issue
+      - name: Test rebase and report through a failed run
         if: steps.latest.outputs.newer == 'true'
         env:
           TAG: ${{ steps.latest.outputs.tag }}
         run: |
           .github/upstream-watch/watch.sh --tag "$TAG" > report.md
+          cat report.md >> "$GITHUB_STEP_SUMMARY"
           result=$(sed -n 's/^\*\*Result:\*\* //p' report.md | head -n 1)
-          gh issue create --title "Upstream $TAG: $result" --body-file report.md
+          echo "Upstream $TAG: $result"
+          exit 1
