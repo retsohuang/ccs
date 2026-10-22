@@ -26,6 +26,8 @@ export interface AuthCommandArgs {
   contextGroup?: string;
   deeperContinuity?: boolean;
   bare?: boolean;
+  loginOnly?: boolean;
+  noLogin?: boolean;
   mode?: string;
   unknownFlags?: string[];
 }
@@ -128,6 +130,8 @@ export function parseArgs(args: string[], options: ParseArgsOptions = {}): AuthC
     '--share-context',
     '--deeper-continuity',
     '--bare',
+    '--login-only',
+    '--no-login',
   ]);
   const knownValueFlags = new Set(['--context-group']);
   if (options.allowMode) {
@@ -201,6 +205,8 @@ export function parseArgs(args: string[], options: ParseArgsOptions = {}): AuthC
     shareContext: args.includes('--share-context'),
     deeperContinuity: args.includes('--deeper-continuity'),
     bare: args.includes('--bare'),
+    loginOnly: args.includes('--login-only'),
+    noLogin: args.includes('--no-login'),
     mode,
     contextGroup,
     unknownFlags: [...unknownFlags],

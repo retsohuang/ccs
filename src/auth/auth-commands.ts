@@ -109,6 +109,12 @@ class AuthCommands {
     console.log(`  ${dim('# Create clean profile without shared commands/skills/agents')}`);
     console.log(`  ${color('ccs auth create sandbox --bare', 'command')}`);
     console.log('');
+    console.log(`  ${dim('# Sign in only, without opening a Claude session afterwards')}`);
+    console.log(`  ${color('ccs auth create work --login-only', 'command')}`);
+    console.log('');
+    console.log(`  ${dim('# Register an account whose sign-in is handled elsewhere')}`);
+    console.log(`  ${color('ccs auth create work --no-login', 'command')}`);
+    console.log('');
     console.log(`  ${dim('# Change shared resources for an existing account')}`);
     console.log(`  ${color('ccs auth resources work --mode profile-local', 'command')}`);
     console.log(`  ${color('ccs auth resources work --mode shared', 'command')}`);
@@ -143,6 +149,12 @@ class AuthCommands {
     );
     console.log(
       `  ${color('--bare', 'command')}                    Create clean profile without shared settings/instructions/resources`
+    );
+    console.log(
+      `  ${color('--login-only', 'command')}              Run "claude auth login" instead of a Claude session (create)`
+    );
+    console.log(
+      `  ${color('--no-login', 'command')}                Create the account without starting Claude (create)`
     );
     console.log(
       `  ${color('--mode <mode>', 'command')}              Shared resource mode for resources: shared|profile-local`

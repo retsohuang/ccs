@@ -22,7 +22,7 @@ Anthropic-compatible APIs without config thrash.
 
 ## About this fork
 
-This is a fork of [kaitranntt/ccs](https://github.com/kaitranntt/ccs) carrying four changes.
+This is a fork of [kaitranntt/ccs](https://github.com/kaitranntt/ccs) carrying five changes.
 First: `rules` is added to `SHARED_ITEMS` (`src/management/shared-manager/types.ts`) as a
 directory-type shared item, so every instance links
 `rules -> ~/.ccs/shared/rules -> ~/.claude/rules` the same way it links `skills` — including
@@ -39,6 +39,11 @@ becomes the default of a later one, and ccs prints one `[i] Kept defaults in set
 on standard error for each saved value it drops. `ccs pin` shows the default and changes it on
 purpose: `ccs pin`, `ccs pin model <id>`, `ccs pin effort <level>` and
 `ccs pin effort <level> <id>`.
+Fifth: `ccs auth create` takes `--login-only` and `--no-login`
+(`src/auth/commands/create-command.ts`). `--login-only` runs `claude auth login` in the new
+instance instead of a full Claude session, so the sign-in ends on its own. `--no-login` registers
+the account and creates its instance without starting Claude, for an account whose sign-in is
+handled elsewhere.
 
 Releases are tagged `v<upstream-base>-retso.<n>` and nothing upgrades the fork automatically;
 a new version only arrives through a deliberate rebase onto upstream. There is no upstream pull
@@ -46,8 +51,9 @@ request.
 
 **Migrating back:** at each deliberate rebase, check whether upstream's `SHARED_ITEMS` has
 gained `rules` and `agent-memory` entries, whether its `SUBCOMMAND_ALLOWED_SESSION_FLAGS` covers
-`remote-control`, and whether its copy-back keeps the default model and effort. The fork retires
-only when upstream carries all four.
+`remote-control`, whether its copy-back keeps the default model and effort, and whether its
+`ccs auth create` has a sign-in-only and a no-sign-in mode. The fork retires only when upstream
+carries all five.
 
 > **[Docker]** `ghcr.io/kaitranntt/ccs-dashboard:latest` is deprecated. Use `ghcr.io/kaitranntt/ccs:latest` instead. See [#1251](https://github.com/kaitranntt/ccs/issues/1251) and [docker/README.md](docker/README.md#choosing-an-image) for migration details. To wire a sibling container to CLIProxy, see [Connect your app to CLIProxy](docker/README.md#connect-your-app-to-cliproxy).
 

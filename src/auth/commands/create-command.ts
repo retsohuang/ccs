@@ -13,7 +13,7 @@ import {
   stripClaudeCodeEnv,
 } from '../../utils/shell-executor';
 
-import { ProfileMetadata } from '../../types';
+import { ClaudeCliInfo, ProfileMetadata } from '../../types';
 import {
   resolveCreateAccountContext,
   policyToAccountContextMetadata,
@@ -40,28 +40,53 @@ function sanitizeProfileNameForInstance(name: string): string {
   return name.replace(/[^a-zA-Z0-9_-]/g, '-').toLowerCase();
 }
 
+function requireClaudeCli(): ClaudeCliInfo {
+  const claudeInfo = getClaudeCliInfo();
+  if (!claudeInfo) {
+    console.log(fail('Claude CLI not found'));
+    console.log('');
+    console.log('Please install Claude CLI first:');
+    console.log(`  ${color('https://claude.ai/download', 'path')}`);
+    exitWithError('Claude CLI not found', ExitCode.BINARY_ERROR);
+  }
+  return claudeInfo;
+}
+
 /**
  * Handle the create command
  */
 export async function handleCreate(ctx: CommandContext, args: string[]): Promise<void> {
   await initUI();
   const parsed = parseArgs(args);
-  const { profileName, force, shareContext, contextGroup, deeperContinuity, bare } = parsed;
+  const {
+    profileName,
+    force,
+    shareContext,
+    contextGroup,
+    deeperContinuity,
+    bare,
+    loginOnly,
+    noLogin,
+  } = parsed;
 
   rejectUnsupportedAuthOptions(parsed, {
     usage:
-      'ccs auth create <profile> [--force] [--bare] [--share-context] [--context-group <name>] [--deeper-continuity]',
+      'ccs auth create <profile> [--force] [--bare] [--share-context] [--context-group <name>] [--deeper-continuity] [--login-only | --no-login]',
   });
 
   if (!profileName) {
     console.log('');
     console.log(
-      `Usage: ${color('ccs auth create <profile> [--force] [--bare] [--share-context] [--context-group <name>] [--deeper-continuity]', 'command')}`
+      `Usage: ${color('ccs auth create <profile> [--force] [--bare] [--share-context] [--context-group <name>] [--deeper-continuity] [--login-only | --no-login]', 'command')}`
     );
     console.log('');
     console.log('Example:');
     console.log(`  ${color('ccs auth create work', 'command')}`);
     exitWithError('Profile name is required', ExitCode.PROFILE_ERROR);
+  }
+
+  if (loginOnly && noLogin) {
+    exitWithError('--login-only and --no-login cannot be used together', ExitCode.PROFILE_ERROR);
   }
 
   // Check exact account ownership before applying the narrow grandfathered
@@ -136,14 +161,7 @@ export async function handleCreate(ctx: CommandContext, args: string[]): Promise
       ? resolveAccountContextPolicy(previousUnifiedProfile || previousLegacyProfile)
       : undefined;
 
-  const claudeInfo = getClaudeCliInfo();
-  if (!claudeInfo) {
-    console.log(fail('Claude CLI not found'));
-    console.log('');
-    console.log('Please install Claude CLI first:');
-    console.log(`  ${color('https://claude.ai/download', 'path')}`);
-    exitWithError('Claude CLI not found', ExitCode.BINARY_ERROR);
-  }
+  const claudeInfo = noLogin ? null : requireClaudeCli();
 
   let rollbackCompleted = false;
   const rollbackMetadata = (): void => {
@@ -242,6 +260,63 @@ export async function handleCreate(ctx: CommandContext, args: string[]): Promise
 
     console.log(info(`Instance directory: ${instancePath}`));
     console.log('');
+
+    const reportProfileCreated = (): void => {
+      console.log('');
+      console.log(
+        infoBox(
+          `Profile:  ${profileName}\n` +
+            `Instance: ${instancePath}\n` +
+            `Type:     account\n` +
+            `Context:  ${formatAccountContextPolicy(contextPolicy)}\n` +
+            `Tokens:   isolated per account\n` +
+            `Resources: ${effectiveBare ? 'profile-local (bare)' : 'shared with ~/.claude'}` +
+            (effectiveBare ? '\nMode:     bare (no shared symlinks)' : ''),
+          'Profile Created'
+        )
+      );
+      console.log('');
+      console.log(header('Usage'));
+      console.log(`  ${color(`ccs ${profileName} "your prompt here"`, 'command')}`);
+      console.log('');
+      console.log(
+        'To keep two accounts separate, create another account and run either profile by name:'
+      );
+      console.log(`  ${color('ccs auth create personal', 'command')}`);
+      console.log(
+        `  ${color(`ccs ${profileName}`, 'command')} / ${color('ccs personal', 'command')}`
+      );
+      console.log('');
+      console.log(
+        warnBox(
+          `Running the command below will SWITCH your default\n` +
+            `CCS account to "${profileName}". After this, running\n` +
+            `"ccs" without a profile name will use this account.\n\n` +
+            `  ${color(`ccs auth default ${profileName}`, 'command')}\n\n` +
+            `To restore the original default, run:\n` +
+            `  ${color('ccs auth reset-default', 'command')}`,
+          'Set as Default?'
+        )
+      );
+      console.log('');
+      // Pool suggestion: shown only AFTER the profile creation fully
+      // succeeded (a pre-create hint would burn the once-per-install
+      // dismissal even when creation fails or rolls back).  Print-only,
+      // TTY-gated, never blocks.  Gated on hasUnifiedConfig() so legacy
+      // profiles.json-only installs receive the hint from ccs doctor only
+      // (where dismissal semantics are preserved).  The profile now exists,
+      // so the registry count is already post-create (no +1 needed).
+      if (!profileExistedBeforeCreate && hasUnifiedConfig()) {
+        maybeShowPoolOnboardingHint(countNativeClaudeProfiles());
+      }
+    };
+
+    if (!claudeInfo) {
+      // --no-login: the account is complete without a Claude sign-in.
+      reportProfileCreated();
+      return;
+    }
+
     const launchDescription =
       contextPolicy.mode === 'shared'
         ? contextPolicy.continuityMode === 'deeper'
@@ -253,6 +328,7 @@ export async function handleCreate(ctx: CommandContext, args: string[]): Promise
     console.log('');
 
     const { path: claudeCli, needsShell } = claudeInfo;
+    const claudeArgs = loginOnly ? ['auth', 'login'] : [];
     const childEnv = stripAmbientProviderCredentials(
       stripClaudeCodeEnv({ ...process.env, CLAUDE_CONFIG_DIR: instancePath })
     );
@@ -262,7 +338,7 @@ export async function handleCreate(ctx: CommandContext, args: string[]): Promise
     let child: ChildProcess;
     try {
       if (needsShell) {
-        const cmdString = escapeShellArg(claudeCli);
+        const cmdString = [escapeShellArg(claudeCli), ...claudeArgs].join(' ');
         child = spawn(cmdString, {
           stdio: 'inherit',
           windowsHide: true,
@@ -270,7 +346,7 @@ export async function handleCreate(ctx: CommandContext, args: string[]): Promise
           env: childEnv,
         });
       } else {
-        child = spawn(claudeCli, [], {
+        child = spawn(claudeCli, claudeArgs, {
           stdio: 'inherit',
           windowsHide: true,
           env: childEnv,
@@ -286,53 +362,7 @@ export async function handleCreate(ctx: CommandContext, args: string[]): Promise
 
     child.on('exit', async (code: number | null) => {
       if (code === 0) {
-        console.log('');
-        console.log(
-          infoBox(
-            `Profile:  ${profileName}\n` +
-              `Instance: ${instancePath}\n` +
-              `Type:     account\n` +
-              `Context:  ${formatAccountContextPolicy(contextPolicy)}\n` +
-              `Tokens:   isolated per account\n` +
-              `Resources: ${effectiveBare ? 'profile-local (bare)' : 'shared with ~/.claude'}` +
-              (effectiveBare ? '\nMode:     bare (no shared symlinks)' : ''),
-            'Profile Created'
-          )
-        );
-        console.log('');
-        console.log(header('Usage'));
-        console.log(`  ${color(`ccs ${profileName} "your prompt here"`, 'command')}`);
-        console.log('');
-        console.log(
-          'To keep two accounts separate, create another account and run either profile by name:'
-        );
-        console.log(`  ${color('ccs auth create personal', 'command')}`);
-        console.log(
-          `  ${color(`ccs ${profileName}`, 'command')} / ${color('ccs personal', 'command')}`
-        );
-        console.log('');
-        console.log(
-          warnBox(
-            `Running the command below will SWITCH your default\n` +
-              `CCS account to "${profileName}". After this, running\n` +
-              `"ccs" without a profile name will use this account.\n\n` +
-              `  ${color(`ccs auth default ${profileName}`, 'command')}\n\n` +
-              `To restore the original default, run:\n` +
-              `  ${color('ccs auth reset-default', 'command')}`,
-            'Set as Default?'
-          )
-        );
-        console.log('');
-        // Pool suggestion: shown only AFTER the profile creation fully
-        // succeeded (a pre-create hint would burn the once-per-install
-        // dismissal even when creation fails or rolls back).  Print-only,
-        // TTY-gated, never blocks.  Gated on hasUnifiedConfig() so legacy
-        // profiles.json-only installs receive the hint from ccs doctor only
-        // (where dismissal semantics are preserved).  The profile now exists,
-        // so the registry count is already post-create (no +1 needed).
-        if (!profileExistedBeforeCreate && hasUnifiedConfig()) {
-          maybeShowPoolOnboardingHint(countNativeClaudeProfiles());
-        }
+        reportProfileCreated();
         process.exit(0);
       } else {
         await rollbackFailedCreate();

@@ -123,7 +123,15 @@ function getSuggestionsForCommand(tokensBeforeCurrent: string[]): CompletionSugg
       if (subcommand === 'create') {
         return completeSubcommands(
           [],
-          ['--force', '--share-context', '--context-group', '--deeper-continuity', '--bare']
+          [
+            '--force',
+            '--share-context',
+            '--context-group',
+            '--deeper-continuity',
+            '--bare',
+            '--login-only',
+            '--no-login',
+          ]
         );
       }
       if (subcommand === 'list') return completeSubcommands([], ['--verbose', '--json']);
