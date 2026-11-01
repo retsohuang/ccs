@@ -6,6 +6,7 @@ import {
   normalizePluginMetadataContent,
   normalizePluginMetadataPathString,
 } from '../../src/management/plugin-path-normalizer';
+import { adoptDivergedFileContent } from '../../src/management/shared-manager/diverged-file-adopter';
 import SharedManager, {
   normalizePluginMetadataContent as normalizeSharedManagerPluginMetadataContent,
   normalizePluginMetadataPathString as normalizeSharedManagerPluginMetadataPathString,
@@ -405,14 +406,14 @@ describe('SharedManager', () => {
     it('preserves diverged bytes when canonical backup creation fails', () => {
       const manager = new SharedManager();
       const instancePath = instanceDir('work');
-      const claudeSettingsPath = path.join(claudeDir(), 'settings.json');
-      const instanceSettingsPath = path.join(instancePath, 'settings.json');
+      const claudeRegistryPath = path.join(claudeDir(), 'plugins', 'installed_plugins.json');
+      const instanceRegistryPath = path.join(instancePath, 'plugins', 'installed_plugins.json');
 
       fs.mkdirSync(claudeDir(), { recursive: true });
       fs.mkdirSync(instancePath, { recursive: true });
-      writeJson(claudeSettingsPath, { theme: 'light' });
-      writeJson(instanceSettingsPath, { theme: 'dark' });
-      setMtime(instanceSettingsPath, fs.statSync(claudeSettingsPath).mtimeMs + 2_000);
+      writeJson(claudeRegistryPath, { version: 2, plugins: {}, theme: 'light' });
+      writeJson(instanceRegistryPath, { version: 2, plugins: {}, theme: 'dark' });
+      setMtime(instanceRegistryPath, fs.statSync(claudeRegistryPath).mtimeMs + 2_000);
 
       const originalLinkSync = fs.linkSync;
       const linkSpy = spyOn(fs, 'linkSync').mockImplementation(((
@@ -428,22 +429,22 @@ describe('SharedManager', () => {
       expect(() => manager.linkSharedDirectories(instancePath)).toThrow('simulated backup failure');
       linkSpy.mockRestore();
 
-      expect(readJson(claudeSettingsPath)).toEqual({ theme: 'light' });
-      expect(readJson(instanceSettingsPath)).toEqual({ theme: 'dark' });
+      expect(readJson(claudeRegistryPath)).toEqual({ version: 2, plugins: {}, theme: 'light' });
+      expect(readJson(instanceRegistryPath)).toEqual({ version: 2, plugins: {}, theme: 'dark' });
     });
 
-    it('does not let a stale Windows fallback roll back newer canonical settings', () => {
+    it('does not let a stale Windows fallback roll back newer canonical plugin registry', () => {
       const manager = new SharedManager();
       const instancePath = instanceDir('windows-copy');
-      const claudeSettingsPath = path.join(claudeDir(), 'settings.json');
-      const instanceSettingsPath = path.join(instancePath, 'settings.json');
+      const claudeRegistryPath = path.join(claudeDir(), 'plugins', 'installed_plugins.json');
+      const instanceRegistryPath = path.join(instancePath, 'plugins', 'installed_plugins.json');
 
       fs.mkdirSync(claudeDir(), { recursive: true });
-      writeJson(claudeSettingsPath, { generation: 2 });
+      writeJson(claudeRegistryPath, { version: 2, plugins: {}, generation: 2 });
       manager.ensureSharedDirectories();
       fs.mkdirSync(instancePath, { recursive: true });
-      writeJson(instanceSettingsPath, { generation: 1 });
-      setMtime(instanceSettingsPath, fs.statSync(claudeSettingsPath).mtimeMs - 2_000);
+      writeJson(instanceRegistryPath, { version: 2, plugins: {}, generation: 1 });
+      setMtime(instanceRegistryPath, fs.statSync(claudeRegistryPath).mtimeMs - 2_000);
 
       Object.defineProperty(process, 'platform', { value: 'win32' });
       spyOn(fs, 'symlinkSync').mockImplementation(() => {
@@ -452,68 +453,89 @@ describe('SharedManager', () => {
 
       manager.linkSharedDirectories(instancePath);
 
-      expect(readJson(claudeSettingsPath)).toEqual({ generation: 2 });
-      expect(readJson(instanceSettingsPath)).toEqual({ generation: 2 });
-      const recoveryName = findRecovery(instanceSettingsPath);
+      expect(readJson(claudeRegistryPath)).toEqual({ version: 2, plugins: {}, generation: 2 });
+      expect(readJson(instanceRegistryPath)).toEqual({ version: 2, plugins: {}, generation: 2 });
+      const recoveryName = findRecovery(instanceRegistryPath);
       expect(recoveryName).toBeDefined();
-      expect(readJson(path.join(path.dirname(instanceSettingsPath), recoveryName!))).toEqual({
+      expect(readJson(path.join(path.dirname(instanceRegistryPath), recoveryName!))).toEqual({
+        version: 2,
+        plugins: {},
         generation: 1,
       });
     });
 
-    it('preserves divergence when the canonical settings symlink is dangling', () => {
+    it('preserves divergence when the canonical plugin registry symlink is dangling', () => {
       const manager = new SharedManager();
       const instancePath = instanceDir('dangling');
-      const claudeSettingsPath = path.join(claudeDir(), 'settings.json');
-      const missingTarget = path.join(tempRoot, 'missing', 'settings.json');
-      const instanceSettingsPath = path.join(instancePath, 'settings.json');
+      const claudeRegistryPath = path.join(claudeDir(), 'plugins', 'installed_plugins.json');
+      const missingTarget = path.join(tempRoot, 'missing', 'installed_plugins.json');
+      const instanceRegistryPath = path.join(instancePath, 'plugins', 'installed_plugins.json');
 
-      fs.mkdirSync(claudeDir(), { recursive: true });
+      fs.mkdirSync(path.dirname(claudeRegistryPath), { recursive: true });
       fs.mkdirSync(instancePath, { recursive: true });
-      fs.symlinkSync(missingTarget, claudeSettingsPath, 'file');
-      writeJson(instanceSettingsPath, { preserved: true });
+      fs.symlinkSync(missingTarget, claudeRegistryPath, 'file');
+      writeJson(instanceRegistryPath, { version: 2, plugins: {}, preserved: true });
 
       expect(() => manager.linkSharedDirectories(instancePath)).toThrow();
 
-      expect(fs.lstatSync(claudeSettingsPath).isSymbolicLink()).toBe(true);
+      expect(fs.lstatSync(claudeRegistryPath).isSymbolicLink()).toBe(true);
       expect(fs.existsSync(missingTarget)).toBe(false);
-      expect(readJson(instanceSettingsPath)).toEqual({ preserved: true });
+      expect(readJson(instanceRegistryPath)).toEqual({ version: 2, plugins: {}, preserved: true });
     });
 
-    it('preserves malformed managed JSON instead of poisoning canonical settings', () => {
+    it('adoptDivergedFileContent throws and keeps the instance plugin registry when the canonical registry symlink is dangling', () => {
+      const instancePath = instanceDir('dangling-adopter');
+      const claudeRegistryPath = path.join(claudeDir(), 'plugins', 'installed_plugins.json');
+      const missingTarget = path.join(tempRoot, 'missing', 'installed_plugins.json');
+      const instanceRegistryPath = path.join(instancePath, 'plugins', 'installed_plugins.json');
+
+      fs.mkdirSync(path.dirname(claudeRegistryPath), { recursive: true });
+      fs.symlinkSync(missingTarget, claudeRegistryPath, 'file');
+      writeJson(instanceRegistryPath, { version: 2, plugins: {}, preserved: true });
+
+      expect(() => adoptDivergedFileContent(instanceRegistryPath, claudeRegistryPath)).toThrow(
+        'ENOENT'
+      );
+
+      expect(fs.lstatSync(claudeRegistryPath).isSymbolicLink()).toBe(true);
+      expect(fs.existsSync(missingTarget)).toBe(false);
+      expect(readJson(instanceRegistryPath)).toEqual({ version: 2, plugins: {}, preserved: true });
+    });
+
+    it('preserves malformed managed JSON instead of poisoning canonical plugin registry', () => {
       const manager = new SharedManager();
       const instancePath = instanceDir('malformed');
-      const claudeSettingsPath = path.join(claudeDir(), 'settings.json');
-      const instanceSettingsPath = path.join(instancePath, 'settings.json');
+      const claudeRegistryPath = path.join(claudeDir(), 'plugins', 'installed_plugins.json');
+      const instanceRegistryPath = path.join(instancePath, 'plugins', 'installed_plugins.json');
 
-      fs.mkdirSync(claudeDir(), { recursive: true });
-      fs.mkdirSync(instancePath, { recursive: true });
-      writeJson(claudeSettingsPath, { valid: true });
-      fs.writeFileSync(instanceSettingsPath, '{broken-json', 'utf8');
-      setMtime(instanceSettingsPath, fs.statSync(claudeSettingsPath).mtimeMs + 2_000);
+      fs.mkdirSync(path.dirname(claudeRegistryPath), { recursive: true });
+      fs.mkdirSync(path.dirname(instanceRegistryPath), { recursive: true });
+      writeJson(claudeRegistryPath, { version: 2, plugins: {}, valid: true });
+      fs.writeFileSync(instanceRegistryPath, '{broken-json', 'utf8');
+      setMtime(instanceRegistryPath, fs.statSync(claudeRegistryPath).mtimeMs + 2_000);
 
       manager.linkSharedDirectories(instancePath);
 
-      expect(readJson(claudeSettingsPath)).toEqual({ valid: true });
-      expect(fs.lstatSync(instanceSettingsPath).isSymbolicLink()).toBe(true);
-      const recoveryName = findRecovery(instanceSettingsPath);
+      expect(readJson(claudeRegistryPath)).toEqual({ version: 2, plugins: {}, valid: true });
+      expect(fs.lstatSync(instanceRegistryPath).isSymbolicLink()).toBe(true);
+      const recoveryName = findRecovery(instanceRegistryPath);
       expect(recoveryName).toBeDefined();
       expect(
-        fs.readFileSync(path.join(path.dirname(instanceSettingsPath), recoveryName!), 'utf8')
+        fs.readFileSync(path.join(path.dirname(instanceRegistryPath), recoveryName!), 'utf8')
       ).toBe('{broken-json');
     });
 
     it('aborts relinking when a writer replaces the path after it is claimed', () => {
       const manager = new SharedManager();
       const instancePath = instanceDir('concurrent');
-      const claudeSettingsPath = path.join(claudeDir(), 'settings.json');
-      const instanceSettingsPath = path.join(instancePath, 'settings.json');
+      const claudeRegistryPath = path.join(claudeDir(), 'plugins', 'installed_plugins.json');
+      const instanceRegistryPath = path.join(instancePath, 'plugins', 'installed_plugins.json');
 
       fs.mkdirSync(claudeDir(), { recursive: true });
       fs.mkdirSync(instancePath, { recursive: true });
-      writeJson(claudeSettingsPath, { generation: 0 });
-      writeJson(instanceSettingsPath, { generation: 1 });
-      setMtime(instanceSettingsPath, fs.statSync(claudeSettingsPath).mtimeMs + 2_000);
+      writeJson(claudeRegistryPath, { version: 2, plugins: {}, generation: 0 });
+      writeJson(instanceRegistryPath, { version: 2, plugins: {}, generation: 1 });
+      setMtime(instanceRegistryPath, fs.statSync(claudeRegistryPath).mtimeMs + 2_000);
 
       const originalRenameSync = fs.renameSync;
       const renameSpy = spyOn(fs, 'renameSync').mockImplementation(((
@@ -522,10 +544,10 @@ describe('SharedManager', () => {
       ) => {
         originalRenameSync(oldPath, newPath);
         if (
-          String(oldPath) === instanceSettingsPath &&
+          String(oldPath) === instanceRegistryPath &&
           String(newPath).includes('.ccs-adopt-claim-')
         ) {
-          writeJson(instanceSettingsPath, { generation: 2 });
+          writeJson(instanceRegistryPath, { version: 2, plugins: {}, generation: 2 });
         }
       }) as typeof fs.renameSync);
 
@@ -534,12 +556,14 @@ describe('SharedManager', () => {
       );
       renameSpy.mockRestore();
 
-      expect(readJson(instanceSettingsPath)).toEqual({ generation: 2 });
-      expect(fs.lstatSync(instanceSettingsPath).isSymbolicLink()).toBe(false);
-      expect(readJson(claudeSettingsPath)).toEqual({ generation: 0 });
-      const recoveryName = findRecovery(instanceSettingsPath);
+      expect(readJson(instanceRegistryPath)).toEqual({ version: 2, plugins: {}, generation: 2 });
+      expect(fs.lstatSync(instanceRegistryPath).isSymbolicLink()).toBe(false);
+      expect(readJson(claudeRegistryPath)).toEqual({ version: 2, plugins: {}, generation: 0 });
+      const recoveryName = findRecovery(instanceRegistryPath);
       expect(recoveryName).toBeDefined();
-      expect(readJson(path.join(path.dirname(instanceSettingsPath), recoveryName!))).toEqual({
+      expect(readJson(path.join(path.dirname(instanceRegistryPath), recoveryName!))).toEqual({
+        version: 2,
+        plugins: {},
         generation: 1,
       });
     });
@@ -558,12 +582,12 @@ describe('SharedManager', () => {
     it('refuses to publish when the canonical file changes before publication', () => {
       const manager = new SharedManager();
       const instancePath = instanceDir('canonical-race');
-      const canonicalPath = path.join(claudeDir(), 'settings.json');
-      const divergedPath = path.join(instancePath, 'settings.json');
+      const canonicalPath = path.join(claudeDir(), 'plugins', 'installed_plugins.json');
+      const divergedPath = path.join(instancePath, 'plugins', 'installed_plugins.json');
       fs.mkdirSync(claudeDir(), { recursive: true });
       fs.mkdirSync(instancePath, { recursive: true });
-      writeJson(canonicalPath, { generation: 0 });
-      writeJson(divergedPath, { generation: 1 });
+      writeJson(canonicalPath, { version: 2, plugins: {}, generation: 0 });
+      writeJson(divergedPath, { version: 2, plugins: {}, generation: 1 });
       setMtime(divergedPath, fs.statSync(canonicalPath).mtimeMs + 2_000);
 
       // Land the competing write while the publication temp file is being
@@ -576,7 +600,7 @@ describe('SharedManager', () => {
         mode?: fs.Mode
       ) => {
         if (String(openPath).startsWith(`${canonicalPath}.ccs-write-`)) {
-          writeJson(canonicalPath, { generation: 99 });
+          writeJson(canonicalPath, { version: 2, plugins: {}, generation: 99 });
         }
         return originalOpenSync(openPath, flags, mode);
       }) as typeof fs.openSync);
@@ -585,10 +609,18 @@ describe('SharedManager', () => {
         'Canonical file changed during adoption'
       );
       openSpy.mockRestore();
-      expect(readJson(canonicalPath)).toEqual({ generation: 99 });
-      expect(readJson(divergedPath)).toEqual({ generation: 1 });
-      expect(readJson(`${canonicalPath}.bak-ccs-adopt`)).toEqual({ generation: 0 });
-      expect(readJson(`${divergedPath}.ccs-adopted-recovery`)).toEqual({ generation: 1 });
+      expect(readJson(canonicalPath)).toEqual({ version: 2, plugins: {}, generation: 99 });
+      expect(readJson(divergedPath)).toEqual({ version: 2, plugins: {}, generation: 1 });
+      expect(readJson(`${canonicalPath}.bak-ccs-adopt`)).toEqual({
+        version: 2,
+        plugins: {},
+        generation: 0,
+      });
+      expect(readJson(`${divergedPath}.ccs-adopted-recovery`)).toEqual({
+        version: 2,
+        plugins: {},
+        generation: 1,
+      });
     });
 
     /**
@@ -699,12 +731,12 @@ describe('SharedManager', () => {
     it('keeps adopted bytes recoverable when canonical changes after verification', () => {
       const manager = new SharedManager();
       const instancePath = instanceDir('late-canonical-writer');
-      const canonicalPath = path.join(claudeDir(), 'settings.json');
-      const divergedPath = path.join(instancePath, 'settings.json');
+      const canonicalPath = path.join(claudeDir(), 'plugins', 'installed_plugins.json');
+      const divergedPath = path.join(instancePath, 'plugins', 'installed_plugins.json');
       fs.mkdirSync(claudeDir(), { recursive: true });
       fs.mkdirSync(instancePath, { recursive: true });
-      writeJson(canonicalPath, { generation: 0 });
-      writeJson(divergedPath, { generation: 1 });
+      writeJson(canonicalPath, { version: 2, plugins: {}, generation: 0 });
+      writeJson(divergedPath, { version: 2, plugins: {}, generation: 1 });
       setMtime(divergedPath, fs.statSync(canonicalPath).mtimeMs + 2_000);
 
       // The diverged claim is dropped only after publication was verified, so
@@ -714,7 +746,7 @@ describe('SharedManager', () => {
       const unlinkSpy = spyOn(fs, 'unlinkSync').mockImplementation(((targetPath: fs.PathLike) => {
         if (!injected && String(targetPath).includes('.ccs-adopt-claim-')) {
           injected = true;
-          writeJson(canonicalPath, { generation: 99 });
+          writeJson(canonicalPath, { version: 2, plugins: {}, generation: 99 });
         }
         return originalUnlinkSync(targetPath);
       }) as typeof fs.unlinkSync);
@@ -722,19 +754,23 @@ describe('SharedManager', () => {
       manager.linkSharedDirectories(instancePath);
       unlinkSpy.mockRestore();
       expect(injected).toBe(true);
-      expect(readJson(canonicalPath)).toEqual({ generation: 99 });
-      expect(readJson(`${divergedPath}.ccs-adopted-recovery`)).toEqual({ generation: 1 });
+      expect(readJson(canonicalPath)).toEqual({ version: 2, plugins: {}, generation: 99 });
+      expect(readJson(`${divergedPath}.ccs-adopted-recovery`)).toEqual({
+        version: 2,
+        plugins: {},
+        generation: 1,
+      });
     });
 
     it('fails reconciliation when the managed source reappears during late cleanup', () => {
       const manager = new SharedManager();
       const instancePath = instanceDir('late-source-writer');
-      const canonicalPath = path.join(claudeDir(), 'settings.json');
-      const divergedPath = path.join(instancePath, 'settings.json');
+      const canonicalPath = path.join(claudeDir(), 'plugins', 'installed_plugins.json');
+      const divergedPath = path.join(instancePath, 'plugins', 'installed_plugins.json');
       fs.mkdirSync(claudeDir(), { recursive: true });
       fs.mkdirSync(instancePath, { recursive: true });
-      writeJson(canonicalPath, { generation: 0 });
-      writeJson(divergedPath, { generation: 1 });
+      writeJson(canonicalPath, { version: 2, plugins: {}, generation: 0 });
+      writeJson(divergedPath, { version: 2, plugins: {}, generation: 1 });
       setMtime(divergedPath, fs.statSync(canonicalPath).mtimeMs + 2_000);
 
       // Recreate the managed source right after the canonical file was
@@ -752,7 +788,7 @@ describe('SharedManager', () => {
           String(oldPath).startsWith(`${canonicalPath}.ccs-write-`)
         ) {
           injected = true;
-          writeJson(divergedPath, { generation: 2 });
+          writeJson(divergedPath, { version: 2, plugins: {}, generation: 2 });
         }
       }) as typeof fs.renameSync);
 
@@ -761,18 +797,18 @@ describe('SharedManager', () => {
       );
       renameSpy.mockRestore();
       expect(injected).toBe(true);
-      expect(readJson(divergedPath)).toEqual({ generation: 2 });
+      expect(readJson(divergedPath)).toEqual({ version: 2, plugins: {}, generation: 2 });
     });
 
     it('retries backup publication without replacing a concurrent backup', () => {
       const manager = new SharedManager();
       const instancePath = instanceDir('backup-race');
-      const canonicalPath = path.join(claudeDir(), 'settings.json');
-      const divergedPath = path.join(instancePath, 'settings.json');
+      const canonicalPath = path.join(claudeDir(), 'plugins', 'installed_plugins.json');
+      const divergedPath = path.join(instancePath, 'plugins', 'installed_plugins.json');
       fs.mkdirSync(claudeDir(), { recursive: true });
       fs.mkdirSync(instancePath, { recursive: true });
-      writeJson(canonicalPath, { generation: 0 });
-      writeJson(divergedPath, { generation: 1 });
+      writeJson(canonicalPath, { version: 2, plugins: {}, generation: 0 });
+      writeJson(divergedPath, { version: 2, plugins: {}, generation: 1 });
       setMtime(divergedPath, fs.statSync(canonicalPath).mtimeMs + 2_000);
 
       const backupPath = `${canonicalPath}.bak-ccs-adopt`;
@@ -792,20 +828,20 @@ describe('SharedManager', () => {
       manager.linkSharedDirectories(instancePath);
       linkSpy.mockRestore();
       expect(readJson(backupPath)).toEqual({ competing: true });
-      expect(readJson(`${backupPath}-1`)).toEqual({ generation: 0 });
-      expect(readJson(canonicalPath)).toEqual({ generation: 1 });
+      expect(readJson(`${backupPath}-1`)).toEqual({ version: 2, plugins: {}, generation: 0 });
+      expect(readJson(canonicalPath)).toEqual({ version: 2, plugins: {}, generation: 1 });
     });
 
     it('preserves regular and symlink-target modes under a restrictive umask', () => {
       const manager = new SharedManager();
-      const canonicalPath = path.join(claudeDir(), 'settings.json');
+      const canonicalPath = path.join(claudeDir(), 'plugins', 'installed_plugins.json');
       const regularInstance = instanceDir('regular-mode');
       fs.mkdirSync(claudeDir(), { recursive: true });
       fs.mkdirSync(regularInstance, { recursive: true });
-      writeJson(canonicalPath, { generation: 0 });
+      writeJson(canonicalPath, { version: 2, plugins: {}, generation: 0 });
       fs.chmodSync(canonicalPath, 0o640);
-      const regularDiverged = path.join(regularInstance, 'settings.json');
-      writeJson(regularDiverged, { generation: 1 });
+      const regularDiverged = path.join(regularInstance, 'plugins', 'installed_plugins.json');
+      writeJson(regularDiverged, { version: 2, plugins: {}, generation: 1 });
       setMtime(regularDiverged, fs.statSync(canonicalPath).mtimeMs + 2_000);
 
       const previousUmask = process.umask(0o077);
@@ -813,14 +849,14 @@ describe('SharedManager', () => {
         manager.linkSharedDirectories(regularInstance);
         expect(fs.statSync(canonicalPath).mode & 0o777).toBe(0o640);
 
-        const targetPath = path.join(tempRoot, 'external-settings.json');
+        const targetPath = path.join(tempRoot, 'external-registry.json');
         fs.renameSync(canonicalPath, targetPath);
         fs.symlinkSync(targetPath, canonicalPath, 'file');
         fs.chmodSync(targetPath, 0o664);
         const symlinkInstance = instanceDir('symlink-mode');
         fs.mkdirSync(symlinkInstance, { recursive: true });
-        const symlinkDiverged = path.join(symlinkInstance, 'settings.json');
-        writeJson(symlinkDiverged, { generation: 2 });
+        const symlinkDiverged = path.join(symlinkInstance, 'plugins', 'installed_plugins.json');
+        writeJson(symlinkDiverged, { version: 2, plugins: {}, generation: 2 });
         setMtime(symlinkDiverged, fs.statSync(targetPath).mtimeMs + 2_000);
         manager.linkSharedDirectories(symlinkInstance);
         expect(fs.statSync(targetPath).mode & 0o777).toBe(0o664);
@@ -833,13 +869,13 @@ describe('SharedManager', () => {
     it('publishes with the mode the canonical inode carries at publication time', () => {
       const manager = new SharedManager();
       const instancePath = instanceDir('concurrent-mode');
-      const canonicalPath = path.join(claudeDir(), 'settings.json');
-      const divergedPath = path.join(instancePath, 'settings.json');
+      const canonicalPath = path.join(claudeDir(), 'plugins', 'installed_plugins.json');
+      const divergedPath = path.join(instancePath, 'plugins', 'installed_plugins.json');
       fs.mkdirSync(claudeDir(), { recursive: true });
       fs.mkdirSync(instancePath, { recursive: true });
-      writeJson(canonicalPath, { generation: 0 });
+      writeJson(canonicalPath, { version: 2, plugins: {}, generation: 0 });
       fs.chmodSync(canonicalPath, 0o640);
-      writeJson(divergedPath, { generation: 1 });
+      writeJson(divergedPath, { version: 2, plugins: {}, generation: 1 });
       setMtime(divergedPath, fs.statSync(canonicalPath).mtimeMs + 2_000);
 
       // A chmod between reading the canonical file and publishing it leaves
@@ -859,7 +895,7 @@ describe('SharedManager', () => {
       manager.linkSharedDirectories(instancePath);
       openSpy.mockRestore();
       expect(fs.statSync(canonicalPath).mode & 0o777).toBe(0o664);
-      expect(readJson(canonicalPath)).toEqual({ generation: 1 });
+      expect(readJson(canonicalPath)).toEqual({ version: 2, plugins: {}, generation: 1 });
     });
 
     it('recovers an interrupted canonical claim before provisioning defaults', () => {
