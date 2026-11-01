@@ -66,3 +66,4 @@ tests/mocks/fixtures/*.d.ts.map
 # Bar demo scaffolding (local dev only)
 _serve*.ts
 _serve*.log
+sdd/
