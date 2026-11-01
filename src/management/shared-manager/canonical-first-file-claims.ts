@@ -3,6 +3,7 @@ import * as path from 'path';
 
 import { warn } from '../../utils/ui';
 import { getLstatSync } from './fs-helpers';
+import { keepTrackedDefaults, reportDroppedDefaults } from './tracked-defaults';
 
 let claimSequence = 0;
 
@@ -109,8 +110,17 @@ export function claimCanonicalFirstCopy(
   }
 
   const claimedContent = fs.readFileSync(claimPath);
+  const keptDefaults =
+    canonicalContent &&
+    path.basename(filePath) === 'settings.json' &&
+    !canonicalContent.equals(claimedContent)
+      ? keepTrackedDefaults(canonicalContent, claimedContent)
+      : null;
   if (canonicalContent?.equals(claimedContent)) {
     fs.unlinkSync(claimPath);
+  } else if (keptDefaults?.identical) {
+    fs.unlinkSync(claimPath);
+    reportDroppedDefaults(keptDefaults.dropped);
   } else {
     preserveClaim(filePath, claimPath, reason);
   }

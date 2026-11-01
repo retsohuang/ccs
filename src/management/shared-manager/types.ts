@@ -61,7 +61,7 @@ export const SHARED_ITEMS: readonly ManagedSharedItem[] = [
     name: 'settings.json',
     type: 'file',
     seedContent: JSON.stringify({}, null, 2),
-    divergencePolicy: 'newer-wins',
+    divergencePolicy: 'canonical-first',
   },
   {
     name: 'CLAUDE.md',

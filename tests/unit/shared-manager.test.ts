@@ -320,7 +320,31 @@ describe('SharedManager', () => {
   });
 
   describe('diverged settings adoption', () => {
-    it('adopts a diverged shared settings.json into ~/.claude before re-linking', () => {
+    const stripAnsi = (text: string) => text.replace(/\u001b\[[0-9;]*m/g, '');
+
+    function captureLaunchLines(run: () => void): { stderr: string[]; stdout: string[] } {
+      const stderr: string[] = [];
+      const stdout: string[] = [];
+      const errorSpy = spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+        stderr.push(stripAnsi(args.join(' ')));
+      });
+      const logSpy = spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+        stdout.push(stripAnsi(args.join(' ')));
+      });
+      try {
+        run();
+      } finally {
+        errorSpy.mockRestore();
+        logSpy.mockRestore();
+      }
+      return { stderr, stdout };
+    }
+
+    function listConflictCopies(directory: string): string[] {
+      return fs.readdirSync(directory).filter((entry) => entry.includes('.ccs-shared-conflict'));
+    }
+
+    it('keeps the canonical settings.json and the stale shared save as a conflict copy', () => {
       const manager = new SharedManager();
       const claudeSettingsPath = path.join(claudeDir(), 'settings.json');
       const sharedSettingsPath = path.join(ccsDir(), 'shared', 'settings.json');
@@ -328,23 +352,24 @@ describe('SharedManager', () => {
       fs.mkdirSync(claudeDir(), { recursive: true });
       fs.mkdirSync(path.join(ccsDir(), 'shared'), { recursive: true });
       writeJson(claudeSettingsPath, { enabledPlugins: { 'demo@market': false } });
+      const canonicalBytes = fs.readFileSync(claudeSettingsPath);
       // Simulate Claude Code's atomic save (temp file + rename) replacing the
-      // managed symlink with a regular file carrying the user's latest change.
+      // managed symlink with a regular file from a session older than the canonical file.
       writeJson(sharedSettingsPath, { enabledPlugins: { 'demo@market': true } });
+      const savedBytes = fs.readFileSync(sharedSettingsPath);
       setMtime(sharedSettingsPath, fs.statSync(claudeSettingsPath).mtimeMs + 2_000);
 
-      manager.ensureSharedDirectories();
+      captureLaunchLines(() => manager.ensureSharedDirectories());
 
       expect(fs.lstatSync(sharedSettingsPath).isSymbolicLink()).toBe(true);
-      expect(readJson(claudeSettingsPath)).toEqual({
-        enabledPlugins: { 'demo@market': true },
-      });
-      expect(readJson(`${claudeSettingsPath}.bak-ccs-adopt`)).toEqual({
-        enabledPlugins: { 'demo@market': false },
-      });
+      expect(fs.readFileSync(claudeSettingsPath).equals(canonicalBytes)).toBe(true);
+      expect(fs.readFileSync(`${sharedSettingsPath}.ccs-shared-conflict`).equals(savedBytes)).toBe(
+        true
+      );
+      expect(fs.existsSync(`${claudeSettingsPath}.bak-ccs-adopt`)).toBe(false);
     });
 
-    it('adopts a diverged instance settings.json during instance linking', () => {
+    it('keeps the canonical settings.json when linking an account that holds a newer save', () => {
       const manager = new SharedManager();
       const instancePath = instanceDir('work');
       const claudeSettingsPath = path.join(claudeDir(), 'settings.json');
@@ -353,13 +378,79 @@ describe('SharedManager', () => {
       fs.mkdirSync(claudeDir(), { recursive: true });
       fs.mkdirSync(instancePath, { recursive: true });
       writeJson(claudeSettingsPath, { theme: 'light' });
+      const canonicalBytes = fs.readFileSync(claudeSettingsPath);
       writeJson(instanceSettingsPath, { theme: 'dark' });
+      const savedBytes = fs.readFileSync(instanceSettingsPath);
       setMtime(instanceSettingsPath, fs.statSync(claudeSettingsPath).mtimeMs + 2_000);
 
-      manager.linkSharedDirectories(instancePath);
+      captureLaunchLines(() => manager.linkSharedDirectories(instancePath));
 
       expect(fs.lstatSync(instanceSettingsPath).isSymbolicLink()).toBe(true);
-      expect(readJson(claudeSettingsPath)).toEqual({ theme: 'dark' });
+      expect(fs.readFileSync(claudeSettingsPath).equals(canonicalBytes)).toBe(true);
+      expect(
+        fs.readFileSync(`${instanceSettingsPath}.ccs-shared-conflict`).equals(savedBytes)
+      ).toBe(true);
+    });
+
+    it('keeps the canonical settings.json when ccs sync finds a newer account save', () => {
+      const instancePath = instanceDir('work');
+      const claudeSettingsPath = path.join(claudeDir(), 'settings.json');
+      const instanceSettingsPath = path.join(instancePath, 'settings.json');
+
+      fs.mkdirSync(claudeDir(), { recursive: true });
+      fs.mkdirSync(instancePath, { recursive: true });
+      writeJson(claudeSettingsPath, { theme: 'light' });
+      const canonicalBytes = fs.readFileSync(claudeSettingsPath);
+      writeJson(instanceSettingsPath, { theme: 'dark' });
+      const savedBytes = fs.readFileSync(instanceSettingsPath);
+      setMtime(instanceSettingsPath, fs.statSync(claudeSettingsPath).mtimeMs + 2_000);
+
+      captureLaunchLines(() => new SharedManager().ensureSharedDirectories());
+
+      expect(fs.existsSync(instanceSettingsPath)).toBe(false);
+      expect(fs.readFileSync(claudeSettingsPath).equals(canonicalBytes)).toBe(true);
+      expect(
+        fs.readFileSync(`${instanceSettingsPath}.ccs-shared-conflict`).equals(savedBytes)
+      ).toBe(true);
+    });
+
+    it('numbers a second divergent save at the same path', () => {
+      const manager = new SharedManager();
+      const claudeSettingsPath = path.join(claudeDir(), 'settings.json');
+      const sharedSettingsPath = path.join(ccsDir(), 'shared', 'settings.json');
+
+      writeJson(claudeSettingsPath, { theme: 'light' });
+      writeJson(sharedSettingsPath, { theme: 'dark' });
+      captureLaunchLines(() => manager.ensureSharedDirectories());
+      fs.rmSync(sharedSettingsPath);
+      writeJson(sharedSettingsPath, { theme: 'solarized' });
+
+      captureLaunchLines(() => manager.ensureSharedDirectories());
+
+      expect(readJson(`${sharedSettingsPath}.ccs-shared-conflict`)).toEqual({ theme: 'dark' });
+      expect(readJson(`${sharedSettingsPath}.ccs-shared-conflict-1`)).toEqual({
+        theme: 'solarized',
+      });
+      expect(readJson(claudeSettingsPath)).toEqual({ theme: 'light' });
+    });
+
+    it('keeps a save that is not valid JSON as a conflict copy', () => {
+      const claudeSettingsPath = path.join(claudeDir(), 'settings.json');
+      const sharedSettingsPath = path.join(ccsDir(), 'shared', 'settings.json');
+
+      writeJson(claudeSettingsPath, { theme: 'light' });
+      const canonicalBytes = fs.readFileSync(claudeSettingsPath);
+      fs.mkdirSync(path.dirname(sharedSettingsPath), { recursive: true });
+      fs.writeFileSync(sharedSettingsPath, '{ "theme": ', 'utf8');
+
+      const { stderr } = captureLaunchLines(() => new SharedManager().ensureSharedDirectories());
+
+      expect(fs.lstatSync(sharedSettingsPath).isSymbolicLink()).toBe(true);
+      expect(fs.readFileSync(claudeSettingsPath).equals(canonicalBytes)).toBe(true);
+      expect(fs.readFileSync(`${sharedSettingsPath}.ccs-shared-conflict`, 'utf8')).toBe(
+        '{ "theme": '
+      );
+      expect(stderr).toEqual([]);
     });
 
     it('adopts a diverged instance plugin registry during instance linking', () => {
@@ -386,7 +477,7 @@ describe('SharedManager', () => {
       expect(Object.keys(adopted.plugins)).toContain('demo@demo-market');
     });
 
-    it('does not create a backup when the diverged copy matches the canonical file', () => {
+    it('leaves no conflict copy and prints nothing when the save matches the canonical file', () => {
       const manager = new SharedManager();
       const claudeSettingsPath = path.join(claudeDir(), 'settings.json');
       const sharedSettingsPath = path.join(ccsDir(), 'shared', 'settings.json');
@@ -396,11 +487,14 @@ describe('SharedManager', () => {
       writeJson(claudeSettingsPath, { theme: 'dark' });
       fs.copyFileSync(claudeSettingsPath, sharedSettingsPath);
 
-      manager.ensureSharedDirectories();
+      const { stderr, stdout } = captureLaunchLines(() => manager.ensureSharedDirectories());
 
       expect(fs.lstatSync(sharedSettingsPath).isSymbolicLink()).toBe(true);
       expect(readJson(claudeSettingsPath)).toEqual({ theme: 'dark' });
       expect(fs.existsSync(`${claudeSettingsPath}.bak-ccs-adopt`)).toBe(false);
+      expect(listConflictCopies(path.join(ccsDir(), 'shared'))).toEqual([]);
+      expect(stderr).toEqual([]);
+      expect(stdout).toEqual([]);
     });
 
     it('preserves diverged bytes when canonical backup creation fails', () => {
@@ -958,14 +1052,12 @@ describe('SharedManager', () => {
     });
 
     describe('tracked default keys', () => {
-      const stripAnsi = (text: string) => text.replace(/\u001b\[[0-9;]*m/g, '');
-
       function writeSettings(filePath: string, value: unknown): void {
         fs.mkdirSync(path.dirname(filePath), { recursive: true });
         fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
       }
 
-      function copyBackSharedSettings(
+      function saveOverSharedSettings(
         tracked: unknown,
         saved: unknown
       ): { claudeSettingsPath: string; sharedSettingsPath: string; before: string } {
@@ -979,134 +1071,115 @@ describe('SharedManager', () => {
         return { claudeSettingsPath, sharedSettingsPath, before };
       }
 
-      function listCopies(directory: string): string[] {
-        return fs
-          .readdirSync(directory)
-          .filter((entry) =>
-            /\.(ccs-adopted-recovery|ccs-adopt-recovery|bak-ccs-adopt)/.test(entry)
-          );
-      }
-
-      function captureLaunchLines(run: () => void): { stderr: string[]; stdout: string[] } {
-        const stderr: string[] = [];
-        const stdout: string[] = [];
-        const errorSpy = spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
-          stderr.push(stripAnsi(args.join(' ')));
-        });
-        const logSpy = spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
-          stdout.push(stripAnsi(args.join(' ')));
-        });
-        try {
-          run();
-        } finally {
-          errorSpy.mockRestore();
-          logSpy.mockRestore();
-        }
-        return { stderr, stdout };
-      }
-
-      it('drops a saved file that differs only in model, leaving no copy', () => {
-        const { claudeSettingsPath, sharedSettingsPath, before } = copyBackSharedSettings(
-          { model: 'claude-fable-5-1', theme: 'dark' },
-          { model: 'sonnet', theme: 'dark' }
-        );
-
-        expect(fs.lstatSync(sharedSettingsPath).isSymbolicLink()).toBe(true);
-        expect(fs.readFileSync(claudeSettingsPath, 'utf8')).toBe(before);
-        expect(listCopies(claudeDir())).toEqual([]);
-        expect(listCopies(path.join(ccsDir(), 'shared'))).toEqual([]);
-      });
-
-      it('keeps the tracked model and takes the other saved keys', () => {
-        const { claudeSettingsPath, before } = copyBackSharedSettings(
-          { model: 'claude-fable-5-1', alwaysThinkingEnabled: true, theme: 'dark' },
-          { model: 'sonnet', alwaysThinkingEnabled: false, theme: 'dark' }
-        );
-
-        const after = fs.readFileSync(claudeSettingsPath, 'utf8');
-        expect(readJson(claudeSettingsPath)).toEqual({
-          model: 'claude-fable-5-1',
-          alwaysThinkingEnabled: false,
-          theme: 'dark',
-        });
-        expect(after.endsWith('}\n')).toBe(true);
-        expect(after).toContain('\n  "alwaysThinkingEnabled": false,');
-        const changedLines = after
-          .split('\n')
-          .filter((line, index) => line !== before.split('\n')[index]);
-        expect(changedLines).toEqual(['  "alwaysThinkingEnabled": false,']);
-      });
-
-      it('keeps the tracked model when the saved file removed it', () => {
-        const { claudeSettingsPath, before } = copyBackSharedSettings(
-          { model: 'claude-fable-5-1', theme: 'dark' },
-          { theme: 'dark' }
-        );
-
-        expect(fs.readFileSync(claudeSettingsPath, 'utf8')).toBe(before);
-      });
-
-      it('adds no model when the tracked file has none', () => {
-        const { claudeSettingsPath, before } = copyBackSharedSettings(
-          { theme: 'dark' },
-          { model: 'sonnet', theme: 'dark' }
-        );
-
-        expect(fs.readFileSync(claudeSettingsPath, 'utf8')).toBe(before);
-      });
-
-      it('keeps the top-level effortLevel and each modelSettings effortLevel', () => {
-        const { claudeSettingsPath, before } = copyBackSharedSettings(
-          {
-            effortLevel: 'high',
-            modelSettings: { 'claude-fable-5-1': { effortLevel: 'high' } },
-          },
-          {
-            effortLevel: 'xhigh',
-            modelSettings: { 'claude-fable-5-1': { effortLevel: 'xhigh' } },
-          }
-        );
-
-        expect(fs.readFileSync(claudeSettingsPath, 'utf8')).toBe(before);
-      });
-
-      it('does not create a modelSettings entry that holds only an effort level', () => {
-        const { claudeSettingsPath, before } = copyBackSharedSettings(
-          { modelSettings: { 'claude-fable-5-1': { effortLevel: 'high' } } },
-          {
+      const defaultOnlyCases: ReadonlyArray<{
+        title: string;
+        tracked: unknown;
+        saved: unknown;
+        line: string;
+      }> = [
+        {
+          title: 'model',
+          tracked: { model: 'claude-fable-5-1', theme: 'dark' },
+          saved: { model: 'sonnet', theme: 'dark' },
+          line: '[i] Kept defaults in settings.json: dropped saved model sonnet',
+        },
+        {
+          title: 'a model the canonical file lacks',
+          tracked: { theme: 'dark' },
+          saved: { model: 'sonnet', theme: 'dark' },
+          line: '[i] Kept defaults in settings.json: dropped saved model sonnet',
+        },
+        {
+          title: 'top-level effortLevel',
+          tracked: { effortLevel: 'high', theme: 'dark' },
+          saved: { effortLevel: 'xhigh', theme: 'dark' },
+          line: '[i] Kept defaults in settings.json: dropped saved effort xhigh',
+        },
+        {
+          title: 'modelSettings effortLevel',
+          tracked: { modelSettings: { 'claude-fable-5-1': { effortLevel: 'high' } } },
+          saved: { modelSettings: { 'claude-fable-5-1': { effortLevel: 'xhigh' } } },
+          line: '[i] Kept defaults in settings.json: dropped saved effort xhigh for claude-fable-5-1',
+        },
+        {
+          title: 'an effort level for a model entry the canonical file lacks',
+          tracked: { modelSettings: { 'claude-fable-5-1': { effortLevel: 'high' } } },
+          saved: {
             modelSettings: {
               'claude-fable-5-1': { effortLevel: 'high' },
               'claude-sonnet-5': { effortLevel: 'xhigh' },
             },
-          }
-        );
+          },
+          line: '[i] Kept defaults in settings.json: dropped saved effort xhigh for claude-sonnet-5',
+        },
+      ];
 
+      for (const { title, tracked, saved, line } of defaultOnlyCases) {
+        it(`drops a save that differs only in ${title}, leaving no conflict copy`, () => {
+          let paths: ReturnType<typeof saveOverSharedSettings> | undefined;
+          const { stderr, stdout } = captureLaunchLines(() => {
+            paths = saveOverSharedSettings(tracked, saved);
+          });
+
+          const { claudeSettingsPath, sharedSettingsPath, before } = paths!;
+          expect(fs.lstatSync(sharedSettingsPath).isSymbolicLink()).toBe(true);
+          expect(fs.readFileSync(claudeSettingsPath, 'utf8')).toBe(before);
+          expect(listConflictCopies(path.dirname(sharedSettingsPath))).toEqual([]);
+          expect(listConflictCopies(claudeDir())).toEqual([]);
+          expect(stderr).toEqual([line]);
+          expect(stdout).toEqual([]);
+        });
+      }
+
+      it('drops a save that removed the tracked model without printing a line', () => {
+        let paths: ReturnType<typeof saveOverSharedSettings> | undefined;
+        const { stderr } = captureLaunchLines(() => {
+          paths = saveOverSharedSettings(
+            { model: 'claude-fable-5-1', theme: 'dark' },
+            { theme: 'dark' }
+          );
+        });
+
+        const { claudeSettingsPath, sharedSettingsPath, before } = paths!;
         expect(fs.readFileSync(claudeSettingsPath, 'utf8')).toBe(before);
+        expect(listConflictCopies(path.dirname(sharedSettingsPath))).toEqual([]);
+        expect(stderr).toEqual([]);
       });
 
-      it('keeps an effort level the saved file removed and the entry fields it changed', () => {
-        const { claudeSettingsPath } = copyBackSharedSettings(
-          { modelSettings: { 'claude-fable-5-1': { effortLevel: 'high', note: 'old' } } },
-          { modelSettings: { 'claude-fable-5-1': { note: 'new' } } }
-        );
-
-        expect(readJson(claudeSettingsPath)).toEqual({
-          modelSettings: { 'claude-fable-5-1': { effortLevel: 'high', note: 'new' } },
+      it('keeps a save that differs in a default key and in another key as a whole conflict copy', () => {
+        let paths: ReturnType<typeof saveOverSharedSettings> | undefined;
+        const saved = { model: 'sonnet', alwaysThinkingEnabled: false, theme: 'dark' };
+        const { stderr } = captureLaunchLines(() => {
+          paths = saveOverSharedSettings(
+            { model: 'claude-fable-5-1', alwaysThinkingEnabled: true, theme: 'dark' },
+            saved
+          );
         });
+
+        const { claudeSettingsPath, sharedSettingsPath, before } = paths!;
+        expect(fs.lstatSync(sharedSettingsPath).isSymbolicLink()).toBe(true);
+        expect(fs.readFileSync(claudeSettingsPath, 'utf8')).toBe(before);
+        expect(readJson(`${sharedSettingsPath}.ccs-shared-conflict`)).toEqual(saved);
+        expect(stderr.some((line) => line.includes('Kept defaults'))).toBe(false);
       });
 
       it('applies the same rule to an instance settings.json', () => {
         const instancePath = instanceDir('work');
         const claudeSettingsPath = path.join(claudeDir(), 'settings.json');
         const instanceSettingsPath = path.join(instancePath, 'settings.json');
-        writeSettings(claudeSettingsPath, { model: 'claude-fable-5-1', theme: 'light' });
+        writeSettings(claudeSettingsPath, { model: 'claude-fable-5-1', theme: 'dark' });
+        const before = fs.readFileSync(claudeSettingsPath, 'utf8');
         writeSettings(instanceSettingsPath, { model: 'sonnet', theme: 'dark' });
         setMtime(instanceSettingsPath, fs.statSync(claudeSettingsPath).mtimeMs + 2_000);
 
-        new SharedManager().linkSharedDirectories(instancePath);
+        const { stderr } = captureLaunchLines(() =>
+          new SharedManager().linkSharedDirectories(instancePath)
+        );
 
         expect(fs.lstatSync(instanceSettingsPath).isSymbolicLink()).toBe(true);
-        expect(readJson(claudeSettingsPath)).toEqual({ model: 'claude-fable-5-1', theme: 'dark' });
+        expect(fs.readFileSync(claudeSettingsPath, 'utf8')).toBe(before);
+        expect(listConflictCopies(instancePath)).toEqual([]);
+        expect(stderr).toEqual(['[i] Kept defaults in settings.json: dropped saved model sonnet']);
       });
 
       it('copies a saved installed_plugins.json back whole', () => {
@@ -1127,34 +1200,7 @@ describe('SharedManager', () => {
 
       describe('launch lines', () => {
         const droppedLines = (tracked: unknown, saved: unknown) =>
-          captureLaunchLines(() => copyBackSharedSettings(tracked, saved));
-
-        it('reports a dropped model value', () => {
-          const { stderr } = droppedLines({ model: 'claude-fable-5-1' }, { model: 'sonnet' });
-
-          expect(stderr).toEqual([
-            '[i] Kept defaults in settings.json: dropped saved model sonnet',
-          ]);
-        });
-
-        it('reports a dropped per-model effort level with its model', () => {
-          const { stderr } = droppedLines(
-            { modelSettings: { 'claude-fable-5-1': { effortLevel: 'high' } } },
-            { modelSettings: { 'claude-fable-5-1': { effortLevel: 'xhigh' } } }
-          );
-
-          expect(stderr).toEqual([
-            '[i] Kept defaults in settings.json: dropped saved effort xhigh for claude-fable-5-1',
-          ]);
-        });
-
-        it('reports a dropped top-level effort level without a model', () => {
-          const { stderr } = droppedLines({ effortLevel: 'high' }, { effortLevel: 'xhigh' });
-
-          expect(stderr).toEqual([
-            '[i] Kept defaults in settings.json: dropped saved effort xhigh',
-          ]);
-        });
+          captureLaunchLines(() => saveOverSharedSettings(tracked, saved));
 
         it('prints one line for each of two dropped values', () => {
           const { stderr } = droppedLines(
@@ -1174,35 +1220,13 @@ describe('SharedManager', () => {
           ]);
         });
 
-        it('prints no line for a key the saved file only removed', () => {
-          const { stderr } = droppedLines(
-            { model: 'claude-fable-5-1', theme: 'dark' },
-            { theme: 'dark' }
-          );
-
-          expect(stderr).toEqual([]);
-        });
-
-        it('prints no line when the copy-back drops nothing', () => {
+        it('prints no Kept defaults line for a save that differs only in a non-default key', () => {
           const { stderr } = droppedLines(
             { model: 'claude-fable-5-1', theme: 'light' },
             { model: 'claude-fable-5-1', theme: 'dark' }
           );
 
           expect(stderr).toEqual([]);
-        });
-
-        it('writes the lines to standard error only, also when other keys were adopted', () => {
-          const { stderr, stdout } = droppedLines(
-            { model: 'claude-fable-5-1', theme: 'light' },
-            { model: 'sonnet', theme: 'dark' }
-          );
-
-          expect(stderr).toEqual([
-            '[i] Kept defaults in settings.json: dropped saved model sonnet',
-          ]);
-          expect(stdout.some((line) => line.includes('Adopted diverged settings.json'))).toBe(true);
-          expect(stdout.some((line) => line.includes('Kept defaults'))).toBe(false);
         });
       });
     });

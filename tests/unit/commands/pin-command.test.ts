@@ -152,14 +152,11 @@ describe('ccs pin', () => {
       expect(logLines).toEqual(['[i] Default model is already claude-fable-5-1']);
     });
 
-    it('handles a waiting saved file before the write', async () => {
+    it('keeps a waiting saved file as a conflict copy before the write', async () => {
       writeTracked({ model: 'claude-fable-5-1', alwaysThinkingEnabled: true });
       fs.mkdirSync(path.dirname(sharedSettingsPath()), { recursive: true });
-      fs.writeFileSync(
-        sharedSettingsPath(),
-        `${JSON.stringify({ model: 'sonnet', alwaysThinkingEnabled: false }, null, 2)}\n`,
-        'utf8'
-      );
+      const saved = { model: 'sonnet', alwaysThinkingEnabled: false };
+      fs.writeFileSync(sharedSettingsPath(), `${JSON.stringify(saved, null, 2)}\n`, 'utf8');
       const later = new Date(fs.statSync(trackedPath()).mtimeMs + 2_000);
       fs.utimesSync(sharedSettingsPath(), later, later);
 
@@ -167,8 +164,11 @@ describe('ccs pin', () => {
 
       expect(readTrackedJson()).toEqual({
         model: 'claude-sonnet-5-5',
-        alwaysThinkingEnabled: false,
+        alwaysThinkingEnabled: true,
       });
+      expect(
+        JSON.parse(fs.readFileSync(`${sharedSettingsPath()}.ccs-shared-conflict`, 'utf8'))
+      ).toEqual(saved);
       expect(fs.lstatSync(sharedSettingsPath()).isSymbolicLink()).toBe(true);
       expect(fs.lstatSync(claudeSettingsPath()).isSymbolicLink()).toBe(true);
     });

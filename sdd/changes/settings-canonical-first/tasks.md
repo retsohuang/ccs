@@ -29,17 +29,17 @@ Blocked by: 2
 
 What it delivers: A session's stale save no longer overwrites `~/.claude/settings.json` on launch or `ccs sync`; it is kept as a conflict copy, and a save that differs only in default keys is dropped with no copy.
 
-- [ ] 3.1 In src/management/shared-manager/types.ts, set the settings.json shared item's divergence policy to `canonical-first` ("settings.json is canonical-first").
-- [ ] 3.2 In src/management/shared-manager/canonical-first-file-claims.ts, when the claimed file is settings.json and its bytes differ from the canonical content, run `keepTrackedDefaults` (src/management/shared-manager/tracked-defaults.ts) on the canonical content and the claimed content; when it reports `identical`, delete the claim and call `reportDroppedDefaults` with its `dropped` lines instead of writing a conflict copy. A `null` result (unparseable JSON) or a missing canonical keeps today's conflict-copy path ("A save that differs only in default keys leaves no conflict copy", "A divergent save becomes a conflict copy").
-- [ ] 3.3 In tests/unit/shared-manager.test.ts, rewrite the settings.json tests of the `diverged settings adoption` block to expect the canonical file to win: the two `adopts a diverged ... settings.json` tests, `does not create a backup when the diverged copy matches the canonical file`, and the nested `tracked default keys` and `launch lines` tests. Each asserts on the files left on disk in the `mkdtemp` home ("The diverged settings adoption tests follow the new policy", "Settings change by editing the canonical file").
+- [x] 3.1 In src/management/shared-manager/types.ts, set the settings.json shared item's divergence policy to `canonical-first` ("settings.json is canonical-first").
+- [x] 3.2 In src/management/shared-manager/canonical-first-file-claims.ts, when the claimed file is settings.json and its bytes differ from the canonical content, run `keepTrackedDefaults` (src/management/shared-manager/tracked-defaults.ts) on the canonical content and the claimed content; when it reports `identical`, delete the claim and call `reportDroppedDefaults` with its `dropped` lines instead of writing a conflict copy. A `null` result (unparseable JSON) or a missing canonical keeps today's conflict-copy path ("A save that differs only in default keys leaves no conflict copy", "A divergent save becomes a conflict copy").
+- [x] 3.3 In tests/unit/shared-manager.test.ts, rewrite the settings.json tests of the `diverged settings adoption` block to expect the canonical file to win: the two `adopts a diverged ... settings.json` tests, `does not create a backup when the diverged copy matches the canonical file`, and the nested `tracked default keys` and `launch lines` tests. Each asserts on the files left on disk in the `mkdtemp` home ("The diverged settings adoption tests follow the new policy", "Settings change by editing the canonical file").
 
 Acceptance criteria:
-- [ ] Test: a stale save at `~/.ccs/shared/settings.json` with a newer mtime, after `ensureSharedDirectories`, leaves the canonical bytes unchanged, leaves the save in `settings.json.ccs-shared-conflict` beside the shared path, and the shared path is a symlink again.
-- [ ] Test: the same at an account's `settings.json`, once through `linkSharedDirectories` and once through `ensureSharedDirectories` (the `ccs sync` path).
-- [ ] Test: a second divergent save at the same path lands in `settings.json.ccs-shared-conflict-1`.
-- [ ] Test: a save that differs only in `model`, only in top-level `effortLevel`, or only in a `modelSettings.<id>.effortLevel` leaves no conflict file, leaves the canonical bytes unchanged, restores the link, and prints the matching `Kept defaults in settings.json: ...` line on standard error.
-- [ ] Test: a save identical to the canonical file leaves no conflict file and prints nothing.
-- [ ] Test: a save that differs in a default key and in another key becomes a whole conflict copy, leaves the canonical bytes unchanged, and prints no `Kept defaults` line.
-- [ ] Test: a save that is not valid JSON becomes a conflict copy and leaves the canonical bytes unchanged.
-- [ ] `bun test tests/unit/shared-manager.test.ts tests/unit/shared-claude-memory.test.ts` passes.
-- [ ] `bun run validate` passes.
+- [x] Test: a stale save at `~/.ccs/shared/settings.json` with a newer mtime, after `ensureSharedDirectories`, leaves the canonical bytes unchanged, leaves the save in `settings.json.ccs-shared-conflict` beside the shared path, and the shared path is a symlink again.
+- [x] Test: the same at an account's `settings.json`, once through `linkSharedDirectories` and once through `ensureSharedDirectories` (the `ccs sync` path).
+- [x] Test: a second divergent save at the same path lands in `settings.json.ccs-shared-conflict-1`.
+- [x] Test: a save that differs only in `model`, only in top-level `effortLevel`, or only in a `modelSettings.<id>.effortLevel` leaves no conflict file, leaves the canonical bytes unchanged, restores the link, and prints the matching `Kept defaults in settings.json: ...` line on standard error.
+- [x] Test: a save identical to the canonical file leaves no conflict file and prints nothing.
+- [x] Test: a save that differs in a default key and in another key becomes a whole conflict copy, leaves the canonical bytes unchanged, and prints no `Kept defaults` line.
+- [x] Test: a save that is not valid JSON becomes a conflict copy and leaves the canonical bytes unchanged.
+- [x] `bun test tests/unit/shared-manager.test.ts tests/unit/shared-claude-memory.test.ts` passes.
+- [x] `bun run validate` passes.

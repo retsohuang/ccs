@@ -539,6 +539,25 @@ describe('InstanceManager MCP sync', () => {
       () => false
     );
 
+    fs.mkdirSync(path.join(tempRoot, '.ccs'), { recursive: true });
+    fs.writeFileSync(
+      path.join(tempRoot, '.ccs', 'profiles.json'),
+      JSON.stringify({
+        version: '2.0.0',
+        default: null,
+        profiles: {
+          sandbox: {
+            type: 'account',
+            created: '2026-08-08T00:00:00.000Z',
+            last_used: null,
+            shared_resource_mode: 'profile-local',
+            bare: true,
+          },
+        },
+      }),
+      'utf8'
+    );
+
     const manager = new InstanceManager();
     const instancePath = manager.getInstancePath('sandbox');
     fs.mkdirSync(path.join(instancePath, 'plugins', 'marketplaces', 'custom-market'), {
