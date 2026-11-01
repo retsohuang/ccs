@@ -1,0 +1,14 @@
+{
+  "change": "settings-canonical-first",
+  "touched": [
+    {
+      "task_id": "1",
+      "task_desc": "1.1 Run `sdd sync` from the repository root so the SDD block is written into CLAUDE.md; `.claude/settings.json` is already committed, and `sdd/changes/settings-canonical-first/` is staged with CLAUDE.md (\"sdd is committed in the fork\").",
+      "files": [
+        "CLAUDE.md",
+        "GLOSSARY.md",
+        "docs/adr/0001-settings-json-is-canonical-first.md"
+      ]
+    }
+  ]
+}
