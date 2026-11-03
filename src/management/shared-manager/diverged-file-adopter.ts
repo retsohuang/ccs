@@ -2,6 +2,11 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import { info, warn } from '../../utils/ui';
+import {
+  INSTALLED_PLUGINS_FILE,
+  baseSnapshotPath,
+  mergeInstalledPlugins,
+} from './installed-plugins-adoption';
 import { keepTrackedDefaults, reportDroppedDefaults } from './tracked-defaults';
 import { getLstatSync } from './fs-helpers';
 
@@ -284,6 +289,23 @@ function publishCanonicalContent(
   }
 }
 
+/**
+ * Record the canonical registry as this home last saw it. Written after a
+ * merge only: a base older than necessary just makes the next merge keep more
+ * records, while a base newer than a running session's view could drop some.
+ */
+function refreshBaseSnapshot(divergedPath: string, content: Buffer, mode: number): void {
+  const basePath = baseSnapshotPath(divergedPath);
+  const tempPath = tempWritePath(basePath);
+  try {
+    writeDurableTempFile(tempPath, content, mode);
+    fs.renameSync(tempPath, basePath);
+  } catch (err) {
+    discardTempFile(tempPath);
+    throw err;
+  }
+}
+
 function getCanonicalFile(canonicalPath: string): {
   content: Buffer | null;
   identity: CanonicalIdentity | null;
@@ -370,8 +392,26 @@ export function adoptDivergedFileContent(
     const canonical = getCanonicalFile(canonicalPath);
     let adopted = diverged;
     let dropped: string[] = [];
+    let mergeSummary: string | null = null;
     if (canonical.content) {
       if (diverged.equals(canonical.content)) {
+        fs.unlinkSync(claimPath);
+        return 'claimed';
+      }
+      const merge =
+        path.basename(divergedPath) === INSTALLED_PLUGINS_FILE
+          ? mergeInstalledPlugins(divergedPath, canonical.content, diverged)
+          : null;
+      if (merge && !merge.ok) {
+        preserveClaim(
+          claimPath,
+          divergedPath,
+          `Refusing to merge ${divergedPath} (${merge.reason})`
+        );
+        return 'claimed';
+      }
+      if (merge && !merge.changed) {
+        refreshBaseSnapshot(divergedPath, canonical.content, canonical.mode);
         fs.unlinkSync(claimPath);
         return 'claimed';
       }
@@ -388,7 +428,10 @@ export function adoptDivergedFileContent(
         adopted = kept.content;
         dropped = kept.dropped;
       }
-      if (claimedStats.mtimeMs <= (canonical.mtimeMs ?? 0)) {
+      if (merge?.ok) {
+        adopted = merge.content;
+        mergeSummary = merge.summary;
+      } else if (claimedStats.mtimeMs <= (canonical.mtimeMs ?? 0)) {
         preserveClaim(
           claimPath,
           divergedPath,
@@ -422,10 +465,17 @@ export function adoptDivergedFileContent(
         code: 'EEXIST',
       });
     }
+    if (mergeSummary !== null) {
+      refreshBaseSnapshot(divergedPath, adopted, canonical.mode);
+    }
     fs.unlinkSync(claimPath);
-    console.log(
-      info(`Adopted diverged ${path.basename(divergedPath)} content into ${canonicalPath}`)
-    );
+    if (mergeSummary !== null) {
+      console.error(info(mergeSummary));
+    } else {
+      console.log(
+        info(`Adopted diverged ${path.basename(divergedPath)} content into ${canonicalPath}`)
+      );
+    }
     reportDroppedDefaults(dropped);
     return 'claimed';
   } catch (err) {
