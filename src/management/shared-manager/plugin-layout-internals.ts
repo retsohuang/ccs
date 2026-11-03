@@ -18,6 +18,7 @@ import {
   adoptDivergedFileContent,
   assertAdoptionPathAbsent,
   recoverOrphanedCanonicalClaim,
+  refreshBaseSnapshot,
 } from './diverged-file-adopter';
 import {
   copyDirectoryFallback,
@@ -25,6 +26,7 @@ import {
   removeExistingPath,
   symlinkPointsTo,
 } from './fs-helpers';
+import { baseSnapshotPath, INSTALLED_PLUGINS_FILE } from './installed-plugins-adoption';
 import type { PluginMetadataRoots } from './plugin-metadata-normalizer';
 import { reconcileLocalMarketplaceRegistry } from './plugin-metadata-normalizer';
 import {
@@ -176,6 +178,17 @@ export function linkInstancePlugins(
       }
     }
     assertInstanceIdentity?.();
+
+    if (item.name === INSTALLED_PLUGINS_FILE && !getLstatSync(baseSnapshotPath(linkEntryPath))) {
+      const canonicalPath = path.join(roots.claudeDir, 'plugins', item.name);
+      runGuardedInstanceMutation(assertInstanceIdentity, () =>
+        refreshBaseSnapshot(
+          linkEntryPath,
+          fs.readFileSync(canonicalPath),
+          fs.statSync(canonicalPath).mode & 0o777
+        )
+      );
+    }
   }
 }
 
@@ -268,6 +281,9 @@ export function detachManagedPluginLayout(roots: PluginLayoutRoots, instancePath
 
     if (symlinkPointsTo(pluginEntryPath, path.join(sharedPluginsPath, item.name))) {
       removeExistingPath(pluginEntryPath, item.type);
+      if (item.name === INSTALLED_PLUGINS_FILE) {
+        fs.rmSync(baseSnapshotPath(pluginEntryPath), { force: true });
+      }
       removedManagedEntries = true;
     }
   }

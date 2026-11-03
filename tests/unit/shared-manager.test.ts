@@ -1444,6 +1444,62 @@ describe('SharedManager', () => {
         ]);
       });
 
+      describe('base snapshot on first link', () => {
+        const canonicalFile = () => path.join(claudeDir(), 'plugins', 'installed_plugins.json');
+        const baseOf = (instancePath: string) =>
+          path.join(instancePath, 'plugins', 'installed_plugins.json.ccs-base');
+
+        it('writes a base equal to the canonical file the first time a home is linked', () => {
+          const instancePath = instanceDir('fresh');
+          fs.mkdirSync(instancePath, { recursive: true });
+          writeJson(canonicalFile(), { version: 2, plugins: { 'sdd@sdd': [record()] } });
+
+          link(instancePath);
+
+          expect(readJson(baseOf(instancePath))).toEqual({
+            version: 2,
+            plugins: { 'sdd@sdd': [record()] },
+          });
+        });
+
+        it('leaves an existing base alone when the home is linked again', () => {
+          const instancePath = instanceDir('again');
+          fs.mkdirSync(instancePath, { recursive: true });
+          writeJson(canonicalFile(), { version: 2, plugins: { 'sdd@sdd': [record()] } });
+          link(instancePath);
+          const firstBase = fs.readFileSync(baseOf(instancePath), 'utf8');
+
+          writeJson(canonicalFile(), {
+            version: 2,
+            plugins: { 'sdd@sdd': [record(newer)], 'new@m': [record({ scope: 'user' })] },
+          });
+          link(instancePath);
+
+          expect(fs.readFileSync(baseOf(instancePath), 'utf8')).toBe(firstBase);
+        });
+
+        it('makes an uninstall in a freshly linked home stick', () => {
+          const instancePath = instanceDir('uninstall');
+          fs.mkdirSync(instancePath, { recursive: true });
+          const keep = record({ scope: 'user', projectPath: undefined });
+          const gone = record({ projectPath: '/Users/retsohuang/Developer/gone' });
+          writeJson(canonicalFile(), {
+            version: 2,
+            plugins: { 'keep@m': [keep], 'gone@m': [gone] },
+          });
+          link(instancePath);
+
+          const linkPath = path.join(instancePath, 'plugins', 'installed_plugins.json');
+          fs.unlinkSync(linkPath);
+          writeJson(linkPath, { version: 2, plugins: { 'keep@m': [keep] } });
+          link(instancePath);
+
+          const expected = { version: 2, plugins: { 'keep@m': [keep] } };
+          expect(readJson(canonicalFile())).toEqual(expected);
+          expect(readJson(baseOf(instancePath))).toEqual(expected);
+        });
+      });
+
       it('keeps newer-wins for the other shared plugin files', () => {
         const newerInstance = instanceDir('newer');
         const staleInstance = instanceDir('stale');

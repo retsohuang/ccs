@@ -291,10 +291,11 @@ function publishCanonicalContent(
 
 /**
  * Record the canonical registry as this home last saw it. Written after a
- * merge only: a base older than necessary just makes the next merge keep more
- * records, while a base newer than a running session's view could drop some.
+ * merge and when the home is first linked, never on every launch: a base older
+ * than necessary just makes the next merge keep more records, while a base
+ * newer than a running session's view could drop some.
  */
-function refreshBaseSnapshot(divergedPath: string, content: Buffer, mode: number): void {
+export function refreshBaseSnapshot(divergedPath: string, content: Buffer, mode: number): void {
   const basePath = baseSnapshotPath(divergedPath);
   const tempPath = tempWritePath(basePath);
   try {
