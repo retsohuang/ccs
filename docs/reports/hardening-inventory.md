@@ -6,10 +6,10 @@ Scope: `src/**/*.{ts,tsx,js,jsx,mjs,cjs}`
 
 | Metric | Value |
 |---|---:|
-| Sync fs occurrences (all) | 2524 |
-| Sync fs files affected (all) | 264 |
-| Sync fs occurrences (runtime hotpaths) | 1194 |
-| Sync fs files affected (runtime hotpaths) | 157 |
+| Sync fs occurrences (all) | 2531 |
+| Sync fs files affected (all) | 265 |
+| Sync fs occurrences (runtime hotpaths) | 1201 |
+| Sync fs files affected (runtime hotpaths) | 158 |
 | Legacy shim markers | 465 |
 | Legacy shim files affected | 176 |
 
@@ -17,8 +17,8 @@ Scope: `src/**/*.{ts,tsx,js,jsx,mjs,cjs}`
 
 | File | Sync Calls | API Names |
 |---|---:|---|
+| `src/management/shared-manager/diverged-file-adopter.ts` | 33 | chmodSync, closeSync, fsyncSync, linkSync, lstatSync, openSync, readdirSync, readFileSync, readlinkSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync |
 | `src/utils/browser/mcp-installer.ts` | 32 | chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync |
-| `src/management/shared-manager/diverged-file-adopter.ts` | 30 | chmodSync, closeSync, fsyncSync, linkSync, lstatSync, openSync, readdirSync, readFileSync, readlinkSync, renameSync, statSync, unlinkSync, writeFileSync |
 | `src/utils/image-analysis/mcp-installer.ts` | 30 | chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync |
 | `src/utils/claude-symlink-manager.ts` | 27 | copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readlinkSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync |
 | `src/cliproxy/config/env-builder.ts` | 25 | existsSync, mkdirSync, readFileSync, writeFileSync |
@@ -56,11 +56,11 @@ Scope: `src/**/*.{ts,tsx,js,jsx,mjs,cjs}`
 
 | Metric | Value |
 |---|---:|
-| typed-error adoption (typed/total throws) | 19.6% (89/455) |
+| typed-error adoption (typed/total throws) | 19.5% (89/456) |
 | typed-error adoption (P4 locked subdomains) | 93.3% (28/30), target 40% |
-| hotpath console.error/warn occurrences | 264 (605 total, 341 CLI-UX exempt) |
+| hotpath console.error/warn occurrences | 264 (606 total, 342 CLI-UX exempt) |
 | hotpath console.error/warn files | 81 |
-| files with createLogger | 65/767 |
+| files with createLogger | 65/769 |
 | subdomains with zero createLogger | 15 (api, bin, channels, cliproxy, cliproxy/accounts, cliproxy/ai-providers, cliproxy/binary, cliproxy/config, cliproxy/management, cliproxy/sync, cliproxy/types, config, dispatcher, shared, types) |
 | files > 400 LOC | 94 |
 | files > 600 LOC | 42 |
