@@ -1444,6 +1444,152 @@ describe('SharedManager', () => {
         ]);
       });
 
+      describe('canonical file changes during publish', () => {
+        function injectWriterOnPublishTemp(
+          canonicalPath: string,
+          shouldInject: (publishOpens: number) => boolean,
+          injectedEntry: (injected: number) => Record<string, unknown[]> = (injected) => ({
+            [`inj${injected}@m`]: [record({ scope: 'user' })],
+          })
+        ) {
+          const originalOpenSync = fs.openSync;
+          let publishOpens = 0;
+          let injected = 0;
+          const spy = spyOn(fs, 'openSync').mockImplementation(((
+            openPath: fs.PathLike,
+            flags: number | string,
+            mode?: fs.Mode
+          ) => {
+            if (String(openPath).startsWith(`${canonicalPath}.ccs-write-`)) {
+              publishOpens++;
+              if (shouldInject(publishOpens)) {
+                injected++;
+                const current = readJson(canonicalPath) as { plugins: object };
+                writeJson(canonicalPath, {
+                  ...current,
+                  plugins: { ...current.plugins, ...injectedEntry(injected) },
+                });
+              }
+            }
+            return originalOpenSync(openPath, flags, mode);
+          }) as typeof fs.openSync);
+          return {
+            publishOpens: () => publishOpens,
+            injected: () => injected,
+            restore: () => spy.mockRestore(),
+          };
+        }
+
+        it('merges again when one writer lands during publish', () => {
+          const { instancePath, canonicalPath, divergedPath } = setup(
+            'work',
+            { version: 2, plugins: { 'sdd@sdd': [record()] } },
+            {
+              version: 2,
+              plugins: { 'sdd@sdd': [record()], 'copy@m': [record({ scope: 'user' })] },
+            },
+            { copyIsNewer: true }
+          );
+          const writer = injectWriterOnPublishTemp(canonicalPath, (opens) => opens === 1);
+
+          try {
+            link(instancePath);
+          } finally {
+            writer.restore();
+          }
+
+          expect(writer.injected()).toBe(1);
+          expect(writer.publishOpens()).toBe(2);
+          expect(readJson(canonicalPath)).toEqual({
+            version: 2,
+            plugins: {
+              'sdd@sdd': [record()],
+              'inj1@m': [record({ scope: 'user' })],
+              'copy@m': [record({ scope: 'user' })],
+            },
+          });
+          expect(findRecovery(divergedPath)).toBeUndefined();
+          expect(fs.lstatSync(divergedPath).isSymbolicLink()).toBe(true);
+          expect(readJson(`${divergedPath}.ccs-base`)).toEqual(readJson(canonicalPath));
+        });
+
+        it('leaves no sidecars when the writer that landed already held the copy records', () => {
+          const copyRecord = record({ scope: 'user' });
+          const { instancePath, canonicalPath, divergedPath } = setup(
+            'work',
+            { version: 2, plugins: { 'sdd@sdd': [record()] } },
+            { version: 2, plugins: { 'sdd@sdd': [record()], 'copy@m': [copyRecord] } },
+            { copyIsNewer: true }
+          );
+          const writer = injectWriterOnPublishTemp(
+            canonicalPath,
+            (opens) => opens === 1,
+            () => ({ 'copy@m': [copyRecord] })
+          );
+
+          try {
+            link(instancePath);
+          } finally {
+            writer.restore();
+          }
+
+          expect(writer.publishOpens()).toBe(1);
+          expect(readJson(canonicalPath)).toEqual({
+            version: 2,
+            plugins: { 'sdd@sdd': [record()], 'copy@m': [copyRecord] },
+          });
+          const sidecars = (directory: string) =>
+            fs
+              .readdirSync(directory)
+              .filter((e) => /\.(bak-ccs-adopt|ccs-adopted-recovery)/.test(e));
+          expect(sidecars(path.dirname(canonicalPath))).toEqual([]);
+          expect(sidecars(path.dirname(divergedPath))).toEqual([]);
+          expect(findRecovery(divergedPath)).toBeUndefined();
+          expect(readJson(`${divergedPath}.ccs-base`)).toEqual(readJson(canonicalPath));
+        });
+
+        it('preserves the copy after three refused retries', () => {
+          const { instancePath, canonicalPath, divergedPath } = setup(
+            'work',
+            { version: 2, plugins: { 'sdd@sdd': [record()] } },
+            {
+              version: 2,
+              plugins: { 'sdd@sdd': [record()], 'copy@m': [record({ scope: 'user' })] },
+            },
+            { copyIsNewer: true }
+          );
+          const writer = injectWriterOnPublishTemp(canonicalPath, () => true);
+
+          try {
+            link(instancePath);
+          } finally {
+            writer.restore();
+          }
+
+          expect(writer.injected()).toBe(4);
+          expect(writer.publishOpens()).toBe(4);
+          expect(Object.keys((readJson(canonicalPath) as { plugins: object }).plugins)).toEqual([
+            'sdd@sdd',
+            'inj1@m',
+            'inj2@m',
+            'inj3@m',
+            'inj4@m',
+          ]);
+          const recoveryName = findRecovery(divergedPath);
+          expect(recoveryName).toBeDefined();
+          expect(
+            Object.keys(
+              (
+                readJson(path.join(path.dirname(divergedPath), recoveryName!)) as {
+                  plugins: object;
+                }
+              ).plugins
+            )
+          ).toEqual(['sdd@sdd', 'copy@m']);
+          expect(fs.lstatSync(divergedPath).isSymbolicLink()).toBe(true);
+        });
+      });
+
       describe('base snapshot on first link', () => {
         const canonicalFile = () => path.join(claudeDir(), 'plugins', 'installed_plugins.json');
         const baseOf = (instancePath: string) =>

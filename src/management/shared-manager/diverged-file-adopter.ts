@@ -6,6 +6,7 @@ import {
   INSTALLED_PLUGINS_FILE,
   baseSnapshotPath,
   mergeInstalledPlugins,
+  type InstalledPluginsMerge,
 } from './installed-plugins-adoption';
 import { keepTrackedDefaults, reportDroppedDefaults } from './tracked-defaults';
 import { getLstatSync } from './fs-helpers';
@@ -154,6 +155,16 @@ interface CanonicalIdentity {
   size: number;
 }
 
+class CanonicalChangedError extends TypeError {
+  code = 'EEXIST';
+
+  constructor(writePath: string) {
+    super(`Canonical file changed during adoption: ${writePath}`);
+  }
+}
+
+const MAX_MERGE_RETRIES = 3;
+
 function canonicalIdentityOf(stats: fs.Stats): CanonicalIdentity {
   return { ino: stats.ino, mtimeMs: stats.mtimeMs, size: stats.size };
 }
@@ -273,9 +284,7 @@ function publishCanonicalContent(
       // EEXIST is this file's marker for "a race was detected", the same code
       // the reappeared-path and concurrent-replacement guards raise. It does
       // not mean a no-replace link() or open('wx') hit an existing path.
-      throw Object.assign(new TypeError(`Canonical file changed during adoption: ${writePath}`), {
-        code: 'EEXIST',
-      });
+      throw new CanonicalChangedError(writePath);
     }
 
     const publishMode = currentStats ? currentStats.mode & 0o777 : mode;
@@ -390,67 +399,105 @@ export function adoptDivergedFileContent(
       return 'claimed';
     }
 
-    const canonical = getCanonicalFile(canonicalPath);
+    let canonical = getCanonicalFile(canonicalPath);
     let adopted = diverged;
     let dropped: string[] = [];
     let mergeSummary: string | null = null;
-    if (canonical.content) {
-      if (diverged.equals(canonical.content)) {
-        fs.unlinkSync(claimPath);
-        return 'claimed';
-      }
-      const merge =
-        path.basename(divergedPath) === INSTALLED_PLUGINS_FILE
-          ? mergeInstalledPlugins(divergedPath, canonical.content, diverged)
-          : null;
-      if (merge && !merge.ok) {
-        preserveClaim(
-          claimPath,
-          divergedPath,
-          `Refusing to merge ${divergedPath} (${merge.reason})`
-        );
-        return 'claimed';
-      }
-      if (merge && !merge.changed) {
-        refreshBaseSnapshot(divergedPath, canonical.content, canonical.mode);
-        fs.unlinkSync(claimPath);
-        return 'claimed';
-      }
-      const kept =
-        path.basename(divergedPath) === 'settings.json'
-          ? keepTrackedDefaults(canonical.content, diverged)
-          : null;
-      if (kept) {
-        if (kept.identical) {
+    let copyRecoveryPublished = false;
+    const sidecarsThisRun: string[] = [];
+    const discardSidecarsThisRun = () => {
+      for (const sidecar of sidecarsThisRun) fs.rmSync(sidecar, { force: true });
+    };
+    for (let retries = 0; ; retries++) {
+      adopted = diverged;
+      dropped = [];
+      mergeSummary = null;
+      let merge: InstalledPluginsMerge | null = null;
+      if (canonical.content) {
+        if (diverged.equals(canonical.content)) {
+          discardSidecarsThisRun();
           fs.unlinkSync(claimPath);
-          reportDroppedDefaults(kept.dropped);
           return 'claimed';
         }
-        adopted = kept.content;
-        dropped = kept.dropped;
-      }
-      if (merge?.ok) {
-        adopted = merge.content;
-        mergeSummary = merge.summary;
-      } else if (claimedStats.mtimeMs <= (canonical.mtimeMs ?? 0)) {
-        preserveClaim(
-          claimPath,
-          divergedPath,
-          `Refusing stale or ambiguously-timed divergence at ${divergedPath}`
+        merge =
+          path.basename(divergedPath) === INSTALLED_PLUGINS_FILE
+            ? mergeInstalledPlugins(divergedPath, canonical.content, diverged)
+            : null;
+        if (merge && !merge.ok) {
+          preserveClaim(
+            claimPath,
+            divergedPath,
+            `Refusing to merge ${divergedPath} (${merge.reason})`
+          );
+          return 'claimed';
+        }
+        if (merge && !merge.changed) {
+          discardSidecarsThisRun();
+          refreshBaseSnapshot(divergedPath, canonical.content, canonical.mode);
+          fs.unlinkSync(claimPath);
+          return 'claimed';
+        }
+        const kept =
+          path.basename(divergedPath) === 'settings.json'
+            ? keepTrackedDefaults(canonical.content, diverged)
+            : null;
+        if (kept) {
+          if (kept.identical) {
+            fs.unlinkSync(claimPath);
+            reportDroppedDefaults(kept.dropped);
+            return 'claimed';
+          }
+          adopted = kept.content;
+          dropped = kept.dropped;
+        }
+        if (merge?.ok) {
+          adopted = merge.content;
+          mergeSummary = merge.summary;
+        } else if (claimedStats.mtimeMs <= (canonical.mtimeMs ?? 0)) {
+          preserveClaim(
+            claimPath,
+            divergedPath,
+            `Refusing stale or ambiguously-timed divergence at ${divergedPath}`
+          );
+          return 'claimed';
+        }
+        // Publish the pre-image before the canonical file is replaced, so an
+        // interruption mid-publication still leaves the old content recoverable.
+        sidecarsThisRun.push(
+          publishSidecarNoReplace(
+            `${canonicalPath}.bak-ccs-adopt`,
+            canonical.content,
+            canonical.mode
+          )
         );
-        return 'claimed';
       }
-      // Publish the pre-image before the canonical file is replaced, so an
-      // interruption mid-publication still leaves the old content recoverable.
-      publishSidecarNoReplace(`${canonicalPath}.bak-ccs-adopt`, canonical.content, canonical.mode);
-    }
-    publishSidecarNoReplace(
-      `${divergedPath}.ccs-adopted-recovery`,
-      diverged,
-      claimedStats.mode & 0o777
-    );
+      if (!copyRecoveryPublished) {
+        sidecarsThisRun.push(
+          publishSidecarNoReplace(
+            `${divergedPath}.ccs-adopted-recovery`,
+            diverged,
+            claimedStats.mode & 0o777
+          )
+        );
+        copyRecoveryPublished = true;
+      }
 
-    publishCanonicalContent(canonical.writePath, adopted, canonical.mode, canonical.identity);
+      try {
+        publishCanonicalContent(canonical.writePath, adopted, canonical.mode, canonical.identity);
+        break;
+      } catch (err) {
+        if (!(err instanceof CanonicalChangedError) || !merge?.ok) throw err;
+        if (retries >= MAX_MERGE_RETRIES) {
+          preserveClaim(
+            claimPath,
+            divergedPath,
+            `Canonical ${INSTALLED_PLUGINS_FILE} kept changing while merging ${divergedPath}`
+          );
+          return 'claimed';
+        }
+        canonical = getCanonicalFile(canonicalPath);
+      }
+    }
     if (!fs.readFileSync(canonicalPath).equals(adopted)) {
       throw Object.assign(
         new TypeError(`Canonical adoption postcondition failed: ${canonicalPath}`),
