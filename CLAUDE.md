@@ -13,6 +13,7 @@ This project uses sdd for spec-driven development. Changes live in `sdd/changes/
 - Tasks are ready to implement, or a half-implemented change should resume → `/sdd-implement`
 - Update a change that already has implemented work → `/sdd-ingest`
 - User wants to plan, propose or design a change, or to rewrite or tidy one that has no task done yet → `/sdd-plan`
+- Save a settled discussion now and run /sdd-plan on it later → `/sdd-plan-later`
 - Add, change or debug a stage in sdd/sdd.yaml → `/sdd-stages`
 
 ## Workflow
@@ -23,6 +24,10 @@ This project uses sdd for spec-driven development. Changes live in `sdd/changes/
 
 - `/sdd-implement` builds one section of tasks.md at a time in a fresh subagent, then commits and reviews it.
 - Requirements change mid-work? `/sdd-ingest`, then re-run `/sdd-implement`.
+
+## Extra stages (sdd/sdd.yaml)
+
+- `fork-release`: finish.after
 
 <!-- SDD:END -->
 
@@ -45,6 +50,8 @@ Factory Droid, CLIProxy, and compatible provider profiles.
 - Do not commit directly to `dev` or `main`.
 - Do not manually bump versions or create release tags. Semantic-release owns
   versions, changelog, tags, npm publish, and GitHub releases.
+  Fork exception: this fork (retsohuang/ccs) releases by hand as `<upstream-stable>-retso.N`
+  through the Homebrew tap, never npm. Use `/ccs-fork-release` (the `fork-release` sdd stage runs it at finish.after).
 - CLI terminal output must be ASCII only: `[OK]`, `[!]`, `[X]`, `[i]`.
 - Respect `NO_COLOR` and TTY-aware output.
 
